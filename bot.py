@@ -497,7 +497,10 @@ class Bot:
                 evade[0] = 0.65 * evade[0] + 0.35 * goal[0]
                 evade[1] = 0.65 * evade[1] + 0.35 * goal[1]
             goal = self._clamp_evasion_to_zone(evade, center, radius)
-            incoming_attack = float(warning_sound.get("age", 99.0)) < 0.35
+            incoming_attack = (
+                float(warning_sound.get("age", 99.0)) < 0.35
+                and (warning_sound.get("kind") == "laser_charge" or warning_sound.get("dist") == "near")
+            )
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 

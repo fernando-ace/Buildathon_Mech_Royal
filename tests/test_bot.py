@@ -357,6 +357,11 @@ class PolicyTests(unittest.TestCase):
 
         self.assertGreater(abs(action["move"][1]), 0.9)
         self.assertTrue(action["boost"])
+
+        obs["tick"] = 2
+        obs["sounds"] = [{"kind": "mortar", "bearing": 0.0, "dist": "far", "age": 0.1}]
+        action = bot.act(obs)
+        self.assertFalse(action["boost"])
     def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()
         me = {
