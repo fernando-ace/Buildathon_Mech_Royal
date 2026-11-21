@@ -241,6 +241,11 @@ class PolicyTests(unittest.TestCase):
         self.assertLess(action["move"][1], 0.0)
         self.assertTrue(action["boost"])
 
+        projectile["pos"] = [20.0, 2.0, 4.5]
+        obs["tick"] = 2
+        action = bot.act(obs)
+        self.assertTrue(action["boost"])
+
     def test_strafes_while_firing_from_inside_the_zone(self):
         bot = self.make_bot()
         me = {

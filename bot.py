@@ -395,7 +395,7 @@ class Bot:
                 dodge[0] = 0.8 * dodge[0] + 0.2 * goal[0]
                 dodge[1] = 0.8 * dodge[1] + 0.2 * goal[1]
             goal = dodge
-            incoming_attack = impact_time < 0.35
+            incoming_attack = impact_time < 0.55
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
         elif target and target.get("kind") == "mech" and nearest < 40.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
