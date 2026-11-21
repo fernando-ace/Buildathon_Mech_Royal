@@ -1,7 +1,9 @@
 import math
 import unittest
+from array import array
 
-from bot import _angle_delta, _lead_point, _normalize
+from bot import Bot, _angle_delta, _lead_point, _mortar_aim, _normalize
+from nav import MapNavigator, point_in_ring
 
 
 class GeometryTests(unittest.TestCase):
@@ -21,6 +23,92 @@ class GeometryTests(unittest.TestCase):
         self.assertGreater(yaw, 0.0)
         self.assertLess(yaw, 0.2)
         self.assertLess(pitch, 0.0)
+
+    def test_mortar_solution_is_finite_for_reachable_target(self):
+        me = {"pos": [0.0, 0.0, 0.0], "stats": {"muzzle_height": 7.0}}
+        target = {"pos": [100.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0]}
+        yaw, pitch = _mortar_aim(me, target, 72.0, 22.0, 4.5)
+        self.assertAlmostEqual(yaw, 0.0)
+        self.assertTrue(math.isfinite(pitch))
+
+
+class PolicyTests(unittest.TestCase):
+    def make_bot(self):
+        hello = {
+            "slot": 0,
+            "map": {"dir": ""},
+            "config": {
+                "mech": {},
+                "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
+                "upgrades": [],
+            },
+        }
+        return Bot(hello)
+
+    def test_zone_controller_moves_early_to_announced_circle(self):
+        bot = self.make_bot()
+        obs = {
+            "t": 5.0,
+            "zone": {
+                "center": [0.0, 0.0], "radius": 100.0,
+                "next_center": [50.0, 0.0], "next_radius": 50.0,
+                "shrink_start": 10.0, "shrink_end": 20.0,
+            },
+        }
+        center, radius = bot._future_zone(obs)
+        self.assertEqual(center, [50.0, 0.0])
+        self.assertEqual(radius, 50.0)
+
+    def test_empty_gun_reloads_even_in_close_combat(self):
+        bot = self.make_bot()
+        gun = {"kind": "gun", "ammo": 0.0, "reload": 0.0, "stats": {"range": 230.0}}
+        me = {"pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"turn_rate": 4.0, "pitch_rate": 3.0}, "weapons": [gun, None]}
+        target = {"id": 1, "pos": [20.0, 0.0, 0.0]}
+        obs = {"self": me, "t": 1.0, "events": []}
+        action = {}
+        fire = bot._weapon_fire(obs, target, [0.0, 0.0], action, (0, gun))
+        self.assertEqual(fire, [False, False])
+        self.assertTrue(action["reload"])
+
+
+class NavigationTests(unittest.TestCase):
+    def make_navigator(self):
+        nx = ny = 40
+        world = {
+            "bounds": {"minX": 0.0, "maxX": 39.0, "minY": 0.0, "maxY": 39.0},
+            "terrain": {"minX": 0.0, "minY": 0.0, "step": 1.0, "nx": nx, "ny": ny, "scale": 0.01},
+            "prisms": [{
+                "base": 0.0,
+                "top": 10.0,
+                "ring": [18.0, 0.0, 22.0, 0.0, 22.0, 28.0, 18.0, 28.0],
+                "holes": [],
+            }],
+        }
+        heights = array("h", [0] * (nx * ny)).tobytes()
+        return MapNavigator(world, heights, grid_step=4.0, radius=1.0, height=3.0)
+
+    def test_point_in_ring_handles_inside_and_outside(self):
+        square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        self.assertTrue(point_in_ring(5.0, 5.0, square))
+        self.assertFalse(point_in_ring(12.0, 5.0, square))
+
+    def test_astar_routes_around_wall(self):
+        nav = self.make_navigator()
+        start = nav._nearest_open(2.0, 20.0)
+        goal = nav._nearest_open(38.0, 20.0)
+        self.assertIsNotNone(start)
+        self.assertIsNotNone(goal)
+        path = nav._astar(start, goal)
+        self.assertTrue(path)
+        ys = [nav._xy(node)[1] for node in path]
+        self.assertGreater(max(ys), 28.0)
+
+    def test_blocked_goal_terminates_at_nearest_walkable_node(self):
+        nav = self.make_navigator()
+        start = nav._nearest_open(2.0, 20.0)
+        waypoint = nav.next_waypoint(list(nav._xy(start)), [20.0, 15.0])
+        self.assertIsNotNone(waypoint)
+        self.assertNotEqual(waypoint, [20.0, 15.0])
 
 
 if __name__ == "__main__":

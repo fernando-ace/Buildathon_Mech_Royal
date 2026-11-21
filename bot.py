@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 import mechfight as mf
+from nav import MapNavigator, load_navigator
 
 
 def _dist(a: list[float], b: list[float]) -> float:
@@ -48,6 +49,32 @@ def _lead_point(me: dict[str, Any], target: dict[str, Any], speed: float, target
     return yaw, pitch
 
 
+def _mortar_aim(me: dict[str, Any], target: dict[str, Any], speed: float, gravity: float, target_height: float) -> tuple[float, float] | None:
+    """Solve the low ballistic arc, with one short lead refinement for target motion."""
+    me_pos, target_pos = me["pos"], target["pos"]
+    velocity = target.get("vel", [0.0, 0.0, 0.0])
+    muzzle = me_pos[2] + me.get("stats", {}).get("muzzle_height", 7.0) + 2.5
+    pitch = 0.0
+    yaw = 0.0
+    flight = math.hypot(target_pos[0] - me_pos[0], target_pos[1] - me_pos[1]) / max(speed, 1.0)
+    for _ in range(3):
+        dx = target_pos[0] + velocity[0] * flight - me_pos[0]
+        dy = target_pos[1] + velocity[1] * flight - me_pos[1]
+        horizontal = math.hypot(dx, dy)
+        dz = target_pos[2] + target_height - muzzle
+        if horizontal < 1e-6:
+            return None
+        v2 = speed * speed
+        discriminant = v2 * v2 - gravity * (gravity * horizontal * horizontal + 2.0 * dz * v2)
+        if discriminant < 0.0:
+            return None
+        tangent = (v2 - math.sqrt(discriminant)) / (gravity * horizontal)
+        pitch = math.atan(tangent)
+        yaw = math.atan2(dy, dx)
+        flight = horizontal / max(1e-6, speed * math.cos(pitch))
+    return yaw, pitch
+
+
 class Bot:
     name = "Quiet Iron"
 
@@ -59,13 +86,25 @@ class Bot:
         self.last_goal: list[float] | None = None
         self.last_threat_bearing: float | None = None
         self.last_threat_time = -100.0
+        self.last_hit_time = -100.0
         self.last_attacker: int | None = None
+        mech_config = self.config.get("mech", {})
+        self.navigator: MapNavigator | None = load_navigator(
+            hello.get("map", {}).get("dir", ""),
+            max_slope_deg=float(mech_config.get("max_slope_deg", 50.0)),
+            radius=float(mech_config.get("radius", 2.5)),
+            height=float(mech_config.get("height", 9.0)),
+        )
+        self.cover_goal: list[float] | None = None
+        self.cover_recheck = 0.0
 
     def _future_zone(self, obs: mf.Observation) -> tuple[list[float], float]:
         zone = obs["zone"]
         t = float(obs["t"])
         start, end = float(zone["shrink_start"]), float(zone["shrink_end"])
-        alpha = 0.0 if t <= start else (1.0 if end <= start or t >= end else (t - start) / (end - start))
+        # Move toward the announced next circle before it starts shrinking, rather than
+        # waiting until the edge is already taking damage.
+        alpha = 1.0 if t < start else (1.0 if end <= start or t >= end else (t - start) / (end - start))
         center = [zone["center"][i] + alpha * (zone["next_center"][i] - zone["center"][i]) for i in range(2)]
         radius = float(zone["radius"]) + alpha * (float(zone["next_radius"]) - float(zone["radius"]))
         return center, max(0.0, radius)
@@ -140,50 +179,64 @@ class Bot:
 
         return min(candidates, key=key)
 
-    def _weapon_fire(self, obs: mf.Observation, target: dict[str, Any] | None, aim: list[float], action: dict[str, Any]) -> list[bool]:
-        weapons = obs["self"].get("weapons", [])
-        fire = [False, False]
-        if not target:
-            return fire
+    def _select_weapon(self, obs: mf.Observation, target: dict[str, Any]) -> tuple[int, dict[str, Any]] | None:
         me = obs["self"]
+        weapons = me.get("weapons", [])
         distance = _dist(me["pos"], target["pos"])
-        target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
-        gun_slot = next((i for i, w in enumerate(weapons) if w and w.get("kind") == "gun"), None)
-        if gun_slot is not None:
-            gun = weapons[gun_slot]
-            actual = me.get("aim", aim)
-            yaw_error = abs(_angle_delta(aim[0], actual[0]))
-            pitch_error = abs(aim[1] - actual[1])
-            aligned = yaw_error <= float(me.get("stats", {}).get("turn_rate", 4.0)) * 0.12 + 0.06 and pitch_error <= float(me.get("stats", {}).get("pitch_rate", 3.0)) * 0.12 + 0.08
-            if float(gun.get("reload", 0.0)) > 0:
-                pass
-            elif float(gun.get("ammo", 0.0)) <= 2 and distance > 35:
-                action["reload"] = True
-            elif distance <= float(gun.get("stats", {}).get("range", self.config["weapons"]["gun"].get("range", 230.0))) and aligned:
-                fire[gun_slot] = True
-
+        speed = math.hypot(*target.get("vel", [0.0, 0.0])[:2])
+        for i, weapon in enumerate(weapons[:2]):
+            if weapon and weapon.get("kind") == "laser" and float(weapon.get("charge", 0.0)) > 0.0:
+                return i, weapon
         for index, weapon in enumerate(weapons[:2]):
-            if not weapon or weapon.get("kind") == "gun":
+            if not weapon:
                 continue
             kind = weapon.get("kind")
             stats = weapon.get("stats", {})
-            if kind == "lightning":
-                yaw_error = abs(_angle_delta(aim[0], me.get("aim", aim)[0]))
-                cone = math.radians(float(stats.get("cone_deg", 30.0)))
-                if distance <= float(stats.get("range", 45.0)) and yaw_error <= cone * 0.45 and float(me.get("energy", 0.0)) >= float(stats.get("energy", 3.0)):
-                    fire[index] = True
-            elif kind == "laser":
-                charging = float(weapon.get("charge", 0.0)) > 0.0
-                danger = any(e.get("type") == "damaged" and obs["t"] - self.last_threat_time < 0.5 for e in obs.get("events", []))
-                if charging:
-                    fire[index] = float(weapon.get("charge", 0.0)) < min(0.55, float(stats.get("charge", 0.75))) and not danger
-                elif distance <= float(stats.get("range", 280.0)) and not danger:
-                    yaw_error = abs(_angle_delta(aim[0], me.get("aim", aim)[0]))
-                    if yaw_error < 0.18:
-                        fire[index] = True
-            elif kind == "mortar":
-                if 22.0 <= distance <= float(stats.get("range", 235.0)):
-                    fire[index] = True
+            if kind == "lightning" and distance <= float(stats.get("range", 45.0)) - 3.0:
+                return index, weapon
+            if kind == "laser" and 55.0 <= distance <= min(180.0, float(stats.get("range", 280.0))) and speed <= 2.5:
+                return index, weapon
+            if kind == "mortar" and 38.0 <= distance <= min(125.0, float(stats.get("range", 235.0))) and speed <= 7.0:
+                return index, weapon
+        for index, weapon in enumerate(weapons[:2]):
+            if weapon and weapon.get("kind") == "gun":
+                return index, weapon
+        return None
+
+    def _weapon_fire(self, obs: mf.Observation, target: dict[str, Any] | None, aim: list[float], action: dict[str, Any], selected: tuple[int, dict[str, Any]] | None) -> list[bool]:
+        weapons = obs["self"].get("weapons", [])
+        fire = [False, False]
+        if not target or selected is None:
+            return fire
+        me = obs["self"]
+        distance = _dist(me["pos"], target["pos"])
+        slot, weapon = selected
+        kind = str(weapon.get("kind", ""))
+        stats = weapon.get("stats", {})
+        actual = me.get("aim", aim)
+        yaw_error = abs(_angle_delta(aim[0], actual[0]))
+        pitch_error = abs(aim[1] - actual[1])
+        mech_stats = me.get("stats", {})
+        aligned = yaw_error <= float(mech_stats.get("turn_rate", 4.0)) * 0.12 + 0.06 and pitch_error <= float(mech_stats.get("pitch_rate", 3.0)) * 0.12 + 0.08
+        if kind == "gun":
+            if float(weapon.get("reload", 0.0)) <= 0.0 and (float(weapon.get("ammo", 0.0)) <= 0.0 or (float(weapon.get("ammo", 0.0)) <= 2.0 and distance > 35.0)):
+                action["reload"] = True
+            elif distance <= float(stats.get("range", 230.0)) and aligned and float(weapon.get("ammo", 0.0)) > 0.0:
+                fire[slot] = True
+        elif kind == "lightning":
+            cone = math.radians(float(stats.get("cone_deg", 30.0)))
+            if distance <= float(stats.get("range", 45.0)) and yaw_error <= cone * 0.4 and float(me.get("energy", 0.0)) >= float(stats.get("energy", 3.0)):
+                fire[slot] = True
+        elif kind == "laser":
+            charge = float(weapon.get("charge", 0.0))
+            charge_time = float(stats.get("charge", 0.75))
+            recently_hit = obs["t"] - self.last_threat_time < 0.45
+            if charge > 0.0:
+                fire[slot] = charge < min(0.55, charge_time * 0.8) and not recently_hit
+            elif distance <= float(stats.get("range", 280.0)) and aligned and not recently_hit:
+                fire[slot] = True
+        elif kind == "mortar" and 22.0 <= distance <= float(stats.get("range", 235.0)) and aligned:
+            fire[slot] = True
         return fire
 
     def act(self, obs: mf.Observation) -> mf.Action:
@@ -193,6 +246,7 @@ class Bot:
         events = obs.get("events", [])
         for event in events:
             if event.get("type") == "damaged":
+                self.last_hit_time = t
                 bearing = event.get("bearing")
                 if bearing is not None:
                     self.last_threat_bearing = float(bearing)
@@ -200,6 +254,22 @@ class Bot:
                 attacker = event.get("by")
                 if attacker is not None:
                     self.last_attacker = int(attacker)
+        recent_sounds = [s for s in obs.get("sounds", []) if float(s.get("age", 99.0)) <= 0.8 and s.get("bearing") is not None]
+        if recent_sounds:
+            sound_priority = {"explosion": 0, "mortar": 1, "laser": 2, "lightning": 3, "gun": 4, "npc_gun": 5, "boost": 6, "jet": 7, "step": 8}
+            sound = min(recent_sounds, key=lambda s: (float(s.get("age", 99.0)), sound_priority.get(s.get("kind"), 9)))
+            sound_time = t - float(sound.get("age", 0.0))
+            if sound_time > self.last_threat_time:
+                self.last_threat_bearing = float(sound["bearing"])
+                self.last_threat_time = sound_time
+        recent_beams = [b for b in obs.get("beams", []) if float(b.get("age", 99.0)) <= 0.8 and b.get("path")]
+        if recent_beams:
+            beam = min(recent_beams, key=lambda b: float(b.get("age", 99.0)))
+            source = beam["path"][0]
+            if t - float(beam.get("age", 0.0)) > self.last_threat_time:
+                self.last_threat_bearing = math.atan2(source[1] - y, source[0] - x)
+                self.last_threat_time = t - float(beam.get("age", 0.0))
+                self.last_attacker = int(beam["by"]) if beam.get("by") is not None else self.last_attacker
 
         action: mf.Action = {"tick": obs["tick"]}
         if obs.get("offer"):
@@ -219,6 +289,22 @@ class Bot:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
             goal = away
+        elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
+            goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
+
+        if self.navigator and goal is None and nearest > 60.0:
+            if self.navigator.cover_score(x, y) < 2:
+                if t >= self.cover_recheck:
+                    self.cover_goal = self.navigator.nearby_cover_goal(me["pos"], center, radius)
+                    self.cover_recheck = t + 8.0
+                if self.cover_goal and _dist([x, y], self.cover_goal) > 15.0:
+                    goal = self.cover_goal
+                elif self.cover_goal:
+                    self.cover_goal = None
+                    self.cover_recheck = t + 12.0
+            else:
+                self.cover_goal = None
+                self.cover_recheck = t
 
         # Opportunistic pickups only when no visible mech is close enough to punish the stop.
         weapons = me.get("weapons", [])
@@ -233,24 +319,65 @@ class Bot:
                 else:
                     goal = pickup["pos"][:2]
 
+        # Cubes are valuable while below the ten-cube damage/health cap, but not worth
+        # crossing an unsafe circle or walking into a nearby fight to collect.
+        if nearest > 60.0 and float(me.get("cubes", 0.0)) < 10.0:
+            safe_radius = max(0.0, radius - 18.0)
+            cubes = [c for c in obs.get("cubes", []) if math.hypot(c["pos"][0] - center[0], c["pos"][1] - center[1]) <= safe_radius and _dist(me["pos"], c["pos"]) <= 24.0]
+            if cubes:
+                cube = min(cubes, key=lambda c: _dist(me["pos"], c["pos"]))
+                if _dist(me["pos"], cube["pos"]) > 3.0:
+                    goal = cube["pos"][:2]
+
+        # Supply drops heal and award three cubes. Only take a quiet, uncontested drop
+        # late, when few players remain and it is already inside the future circle.
+        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
+            drops = [d for d in obs.get("drops", []) if float(d.get("lands_in", 99.0)) <= 0.0 and d.get("holder") is None and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)]
+            if drops:
+                drop = min(drops, key=lambda d: _dist(me["pos"], d["pos"]))
+                if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:
+                    goal = drop["pos"][:2]
+
         move = [0.0, 0.0]
         if goal:
-            move = _normalize(goal[0] - x, goal[1] - y)
-        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0)
+            waypoint = self.navigator.next_waypoint(me["pos"], goal) if self.navigator else None
+            if waypoint is None:
+                waypoint = goal
+            move = _normalize(waypoint[0] - x, waypoint[1] - y)
+        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6
         action["move"] = move
         action["boost"] = bool(urgent and float(me.get("energy", 0.0)) > 15.0)
 
+        if target is None and t - self.last_hit_time > 0.5:
+            gun = next((w for w in weapons if w and w.get("kind") == "gun"), None)
+            if gun and float(gun.get("ammo", 0.0)) <= 2.0 and float(gun.get("reload", 0.0)) <= 0.0:
+                action["reload"] = True
+
         aim = list(me.get("aim", [0.0, 0.0]))
         if target:
-            gun = next((w for w in weapons if w and w.get("kind") == "gun"), None)
-            if gun:
-                yaw, pitch = _lead_point(me, target, float(gun.get("stats", {}).get("speed", 252.0)), float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5)
-            else:
+            selected = self._select_weapon(obs, target)
+            selected_kind = selected[1].get("kind") if selected else "gun"
+            target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
+            if selected_kind == "mortar" and selected:
+                solution = _mortar_aim(me, target, float(selected[1].get("stats", {}).get("speed", 72.0)), float(self.config["weapons"]["mortar"].get("gravity", 22.0)), target_height)
+                if solution:
+                    yaw, pitch = solution
+                else:
+                    selected = next(((i, w) for i, w in enumerate(weapons[:2]) if w and w.get("kind") == "gun"), None)
+                    yaw, pitch = _lead_point(me, target, float(selected[1].get("stats", {}).get("speed", 252.0)) if selected else 252.0, target_height)
+            elif selected_kind == "laser":
+                yaw, pitch = _lead_point(me, target, 1e9, target_height)
+            elif selected_kind == "lightning":
                 target_pos = target["pos"]
                 yaw = math.atan2(target_pos[1] - y, target_pos[0] - x)
-                pitch = math.atan2(target_pos[2] + 4.5 - (z + float(me.get("stats", {}).get("muzzle_height", 7.0))), max(1e-6, math.hypot(target_pos[0] - x, target_pos[1] - y)))
+                pitch = math.atan2(target_pos[2] + target_height - (z + float(me.get("stats", {}).get("muzzle_height", 7.0))), max(1e-6, math.hypot(target_pos[0] - x, target_pos[1] - y)))
+            else:
+                gun = selected[1] if selected and selected[1].get("kind") == "gun" else None
+                yaw, pitch = _lead_point(me, target, float(gun.get("stats", {}).get("speed", 252.0)) if gun else 252.0, target_height)
+            mech_config = self.config.get("mech", {})
+            pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            action["fire"] = self._weapon_fire(obs, target, aim, action)
+            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:
