@@ -85,6 +85,16 @@ class MapNavigator:
                 min(ring[::2]), max(ring[::2]), min(ring[1::2]), max(ring[1::2]),
                 float(prism["base"]), float(prism["top"]), ring, holes,
             ))
+        self._sight_bucket_size = 48.0
+        self._sight_index: dict[tuple[int, int], list[int]] = {}
+        for index, (pmin_x, pmax_x, pmin_y, pmax_y, *_rest) in enumerate(self._prisms):
+            bx0 = math.floor((pmin_x - self.origin_x) / self._sight_bucket_size)
+            bx1 = math.floor((pmax_x - self.origin_x) / self._sight_bucket_size)
+            by0 = math.floor((pmin_y - self.origin_y) / self._sight_bucket_size)
+            by1 = math.floor((pmax_y - self.origin_y) / self._sight_bucket_size)
+            for by in range(by0, by1 + 1):
+                for bx in range(bx0, bx1 + 1):
+                    self._sight_index.setdefault((bx, by), []).append(index)
         self._build_grid()
         self.roofs = self._build_roofs()
         self._path: list[int] = []
@@ -350,16 +360,50 @@ class MapNavigator:
 
     def _blocks_ground_sight(self, start: list[float], end: list[float]) -> bool:
         dx, dy = end[0] - start[0], end[1] - start[1]
-        steps = max(2, int(math.ceil(math.hypot(dx, dy) / max(2.0, self.grid_step))))
         start_z = float(start[2]) + self.height * 0.5 if len(start) > 2 else self.height * 0.5
         end_z = float(end[2]) + self.height * 0.5 if len(end) > 2 else self.height * 0.5
         min_x, max_x = sorted((start[0], end[0]))
         min_y, max_y = sorted((start[1], end[1]))
-        for pmin_x, pmax_x, pmin_y, pmax_y, base, top, ring, holes in self._prisms:
+
+        def intersections(ring: list[float]) -> list[float]:
+            values = [0.0, 1.0]
+            count = len(ring) // 2
+            for i in range(count):
+                j = (i + 1) % count
+                ax, ay = ring[2 * i] - start[0], ring[2 * i + 1] - start[1]
+                ex, ey = ring[2 * j] - ring[2 * i], ring[2 * j + 1] - ring[2 * i + 1]
+                denominator = dx * ey - dy * ex
+                if abs(denominator) < 1e-9:
+                    continue
+                t = (ax * ey - ay * ex) / denominator
+                u = (ax * dy - ay * dx) / denominator
+                if 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0:
+                    values.append(t)
+            return sorted(set(values))
+
+        bucket = self._sight_bucket_size
+        bx0 = math.floor((min_x - self.origin_x) / bucket)
+        bx1 = math.floor((max_x - self.origin_x) / bucket)
+        by0 = math.floor((min_y - self.origin_y) / bucket)
+        by1 = math.floor((max_y - self.origin_y) / bucket)
+        prism_indices = {
+            index
+            for by in range(by0, by1 + 1)
+            for bx in range(bx0, bx1 + 1)
+            for index in self._sight_index.get((bx, by), ())
+        }
+        for index in prism_indices:
+            pmin_x, pmax_x, pmin_y, pmax_y, base, top, ring, holes = self._prisms[index]
             if top <= min(start_z, end_z) or pmax_x < min_x or pmin_x > max_x or pmax_y < min_y or pmin_y > max_y:
                 continue
-            for step in range(1, steps):
-                t = step / steps
+            crossings = intersections(ring)
+            for hole in holes:
+                crossings.extend(intersections(hole))
+            crossings = sorted(set(crossings))
+            for left, right in zip(crossings, crossings[1:]):
+                if right - left < 1e-9:
+                    continue
+                t = (left + right) * 0.5
                 x, y = start[0] + t * dx, start[1] + t * dy
                 z = start_z + t * (end_z - start_z)
                 if base <= z <= top and point_in_ring(x, y, ring) and not any(point_in_ring(x, y, hole) for hole in holes):
@@ -375,7 +419,6 @@ class MapNavigator:
         threats: list[dict[str, Any]] | None = None,
     ) -> list[float] | None:
         safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
-        best: tuple[float, int] | None = None
         ix0 = max(0, int(math.floor((position[0] - max_distance - self.origin_x) / self.grid_step)))
         ix1 = min(self.width - 1, int(math.ceil((position[0] + max_distance - self.origin_x) / self.grid_step)))
         iy0 = max(0, int(math.floor((position[1] - max_distance - self.origin_y) / self.grid_step)))
@@ -384,7 +427,8 @@ class MapNavigator:
             (threat for threat in (threats or []) if len(threat.get("pos", [])) >= 2
              and math.hypot(threat["pos"][0] - position[0], threat["pos"][1] - position[1]) <= 180.0),
             key=lambda threat: math.hypot(threat["pos"][0] - position[0], threat["pos"][1] - position[1]),
-        )[:5]
+        )[:2]
+        candidates: list[tuple[float, int, float, float, int]] = []
         for iy in range(iy0, iy1 + 1):
             for ix in range(ix0, ix1 + 1):
                 node = self._id(ix, iy)
@@ -395,19 +439,18 @@ class MapNavigator:
                 travel = math.hypot(x - position[0], y - position[1])
                 if travel > max_distance or math.hypot(x - center[0], y - center[1]) > safe_radius:
                     continue
-                blocked = 0
-                end = [x, y, self._ground[node]]
-                for threat in near:
-                    if self._blocks_ground_sight(threat["pos"], end):
-                        blocked += 1
-                if near and blocked == 0:
-                    continue
-                # A wall that hides us from one close shooter is worth a modest
-                # detour; then prefer the shorter route and more surrounding cover.
-                score = travel - min(12.0, float(cover) * 3.0) - 35.0 * blocked
-                if best is None or score < best[0]:
-                    best = (score, node)
-        return list(self._xy(best[1])) if best else None
+                candidates.append((travel, node, x, y, cover))
+        # A close occluded cell usually exists nearby; bounding ray tests to the
+        # nearest candidates keeps per-observation work well below the 50 ms cap.
+        candidates.sort(key=lambda item: item[0] - min(12.0, item[4] * 3.0))
+        for _travel, node, x, y, _cover in candidates[:24]:
+            end = [x, y, self._ground[node]]
+            for threat in near:
+                if self._blocks_ground_sight(threat["pos"], end):
+                    # The candidates are ordered by walking cost, so the first
+                    # cell that breaks a close threat's sight is the useful goal.
+                    return [x, y]
+        return None
 
 
 def load_navigator(directory: str, *, max_slope_deg: float = 50.0, radius: float = 2.5, height: float = 9.0) -> MapNavigator | None:
