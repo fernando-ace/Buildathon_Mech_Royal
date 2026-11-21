@@ -267,6 +267,8 @@ class Bot:
                 if bearing is not None:
                     self.last_threat_bearing = float(bearing)
                     self.last_threat_time = t
+                else:
+                    self.last_threat_bearing = None
                 attacker = event.get("by")
                 if attacker is not None:
                     self.last_attacker = int(attacker)
@@ -345,10 +347,17 @@ class Bot:
                 if _dist(me["pos"], cube["pos"]) > 3.0:
                     goal = cube["pos"][:2]
 
-        # Supply drops heal and award three cubes. Only take a quiet, uncontested drop
-        # late, when few players remain and it is already inside the future circle.
-        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
-            drops = [d for d in obs.get("drops", []) if float(d.get("lands_in", 99.0)) <= 0.0 and d.get("holder") is None and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)]
+        # An uncontested drop is a full heal and three cubes. Start toward it early
+        # enough to arrive as it lands, but only while no mech is close.
+        if nearest > 120.0 and t - self.last_hit_time > 2.5:
+            walk_speed = float(me.get("stats", {}).get("walk_speed", self.config.get("mech", {}).get("walk_speed", 11.7)))
+            drops = [
+                d for d in obs.get("drops", [])
+                if d.get("holder") is None
+                and _dist(me["pos"], d["pos"]) <= 240.0
+                and float(d.get("lands_in", 99.0)) <= _dist(me["pos"], d["pos"]) / max(1.0, walk_speed) + 5.0
+                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)
+            ]
             if drops:
                 drop = min(drops, key=lambda d: _dist(me["pos"], d["pos"]))
                 if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:

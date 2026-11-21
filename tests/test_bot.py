@@ -143,6 +143,41 @@ class PolicyTests(unittest.TestCase):
 
         self.assertTrue(bot.act(obs)["jump"])
 
+    def test_safe_supply_drop_is_targeted_before_only_four_mechs_remain(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"walk_speed": 11.7}, "hp": 500.0, "max_hp": 1400.0,
+            "energy": 100.0, "grounded": False, "in_zone": True, "cubes": 0, "weapons": [None, None],
+        }
+        obs = {
+            "t": 30.0, "tick": 300, "alive": 16.0, "self": me, "mechs": [], "events": [], "sounds": [], "beams": [],
+            "pickups": [], "cubes": [], "drops": [{"pos": [80.0, 0.0, 0.0], "lands_in": 10.0, "holder": None, "radius": 8.0}], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 200.0, "next_center": [0.0, 0.0], "next_radius": 100.0, "shrink_start": 40.0, "shrink_end": 50.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertGreater(action["move"][0], 0.0)
+
+    def test_zone_damage_clears_stale_attacker_bearing(self):
+        bot = self.make_bot()
+        bot.last_threat_bearing = 1.57
+        bot.last_threat_time = 9.0
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {}, "hp": 1000.0, "max_hp": 1400.0,
+            "energy": 100.0, "grounded": False, "in_zone": False, "cubes": 0, "weapons": [None, None],
+        }
+        obs = {
+            "t": 10.0, "tick": 100, "alive": 16.0, "self": me, "mechs": [], "events": [{"type": "damaged", "bearing": None, "by": None}],
+            "sounds": [], "beams": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0, "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertIsNone(bot.last_threat_bearing)
+        self.assertEqual(action["move"], [0.0, 0.0])
+
 
 class NavigationTests(unittest.TestCase):
     def make_navigator(self):
