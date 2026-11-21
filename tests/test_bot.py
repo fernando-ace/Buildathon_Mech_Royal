@@ -471,6 +471,19 @@ class NavigationTests(unittest.TestCase):
 
         self.assertEqual(goal, list(nav._xy(higher_cover)))
 
+    def test_threat_cover_goal_uses_a_building_to_break_sight(self):
+        nav = self.make_navigator()
+        threat = {"pos": [0.0, 10.0, 0.0]}
+        start = [10.0, 10.0, 0.0]
+
+        goal = nav.nearby_cover_goal(
+            start, [20.0, 20.0], 40.0,
+            max_distance=30.0, min_cover_score=1, threats=[threat],
+        )
+
+        self.assertIsNotNone(goal)
+        self.assertTrue(nav._blocks_ground_sight(threat["pos"], [goal[0], goal[1], 0.0]))
+
     def test_roof_candidates_respect_energy_reserve(self):
         nx = ny = 40
         world = {
