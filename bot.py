@@ -344,6 +344,9 @@ class Bot:
             dx, dy = target_pos[0] - x, target_pos[1] - y
             length = max(1.0, math.hypot(dx, dy))
             side = 1.0 if self.slot % 2 == 0 else -1.0
+            period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
+            if int(t / period) % 2:
+                side = -side
             evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
             if goal:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]

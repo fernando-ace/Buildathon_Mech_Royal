@@ -174,6 +174,36 @@ class PolicyTests(unittest.TestCase):
         self.assertAlmostEqual(abs(action["move"][1]), 1.0, delta=0.01)
         self.assertTrue(action["boost"])
 
+    def test_ranged_evasion_changes_sides_after_a_short_interval(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1000.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        attacker = {
+            "id": 2, "kind": "mech", "pos": [60.0, 0.0, 0.0],
+            "vel": [0.0, 0.0, 0.0], "aim": [math.pi, 0.0], "hp": 1400.0,
+        }
+        obs = {
+            "tick": 1, "t": 0.5, "alive": 12.0, "self": me, "mechs": [attacker],
+            "events": [], "sounds": [], "beams": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        first = bot.act(obs)["move"][1]
+        obs["tick"] = 2
+        obs["t"] = 2.0
+        second = bot.act(obs)["move"][1]
+
+        self.assertLess(first * second, 0.0)
+        obs["tick"] = 3
+        obs["t"] = 4.0
+        third = bot.act(obs)["move"][1]
+        self.assertLess(second * third, 0.0)
+
     def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()
         me = {
