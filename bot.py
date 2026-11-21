@@ -166,6 +166,54 @@ class Bot:
                 best_index, best_score = index, value
         return best_index
 
+    def _projectile_threat(self, obs: mf.Observation) -> tuple[float, list[float]] | None:
+        me = obs["self"]
+        pos = me["pos"]
+        velocity = me.get("vel", [0.0, 0.0, 0.0])
+        height = float(self.config.get("mech", {}).get("height", 9.0))
+        body_radius = float(self.config.get("mech", {}).get("radius", 2.5))
+        projectile_config = self.config.get("projectile", {})
+        threats: list[tuple[float, float, list[float]]] = []
+        for projectile in obs.get("projectiles", []):
+            projectile_pos = projectile["pos"]
+            projectile_velocity = projectile["vel"]
+            rx = float(projectile_pos[0]) - float(pos[0])
+            ry = float(projectile_pos[1]) - float(pos[1])
+            vx = float(projectile_velocity[0]) - float(velocity[0])
+            vy = float(projectile_velocity[1]) - float(velocity[1])
+            speed_squared = vx * vx + vy * vy
+            if speed_squared < 1e-6:
+                continue
+            impact_time = -(rx * vx + ry * vy) / speed_squared
+            if impact_time < 0.0:
+                impact_time = 0.0
+            if impact_time > 0.65:
+                continue
+            closest_x = rx + vx * impact_time
+            closest_y = ry + vy * impact_time
+            closest_distance = math.hypot(closest_x, closest_y)
+            kind = str(projectile.get("kind", "gun"))
+            projectile_radius = float(projectile_config.get(f"{kind}_radius", 0.6))
+            collision_distance = body_radius + projectile_radius + 1.5
+            if closest_distance > collision_distance:
+                continue
+            projectile_z = float(projectile_pos[2]) + float(projectile_velocity[2]) * impact_time
+            mech_z = float(pos[2]) + float(velocity[2]) * impact_time
+            if abs(projectile_z - (mech_z + height * 0.5)) > height * 0.5 + projectile_radius:
+                continue
+            speed = math.sqrt(speed_squared)
+            perpendicular = [-vy / speed, vx / speed]
+            side_of_path = closest_x * perpendicular[0] + closest_y * perpendicular[1]
+            side = -1.0 if side_of_path > 0.0 else 1.0
+            if abs(side_of_path) < 0.1:
+                side = 1.0 if self.slot % 2 == 0 else -1.0
+            direction = [side * perpendicular[0], side * perpendicular[1]]
+            threats.append((impact_time, closest_distance, direction))
+        if not threats:
+            return None
+        impact_time, _, direction = min(threats, key=lambda threat: (threat[0], threat[1]))
+        return impact_time, direction
+
     def _target(self, obs: mf.Observation) -> dict[str, Any] | None:
         me = obs["self"]
         actors = obs.get("mechs", [])
@@ -302,6 +350,7 @@ class Bot:
         goal = self._zone_goal(obs)
         target = self._target(obs)
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
+        projectile_threat = self._projectile_threat(obs)
         incoming_attack = False
         incoming_threat: dict[str, Any] | None = None
         incoming_aim_error = math.inf
@@ -327,8 +376,16 @@ class Bot:
                     incoming_charging = charging
                     threat_score = score
 
+        if projectile_threat:
+            impact_time, direction = projectile_threat
+            dodge = [x + 36.0 * direction[0], y + 36.0 * direction[1]]
+            if goal:
+                dodge[0] = 0.8 * dodge[0] + 0.2 * goal[0]
+                dodge[1] = 0.8 * dodge[1] + 0.2 * goal[1]
+            goal = dodge
+            incoming_attack = impact_time < 0.35
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        if target and target.get("kind") == "mech" and nearest < 40.0:
+        elif target and target.get("kind") == "mech" and nearest < 40.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
             length = max(1.0, math.hypot(dx, dy))
             away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
