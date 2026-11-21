@@ -97,6 +97,8 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
+        self.patrol_goal: list[float] | None = None
+        self.patrol_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
 
@@ -308,6 +310,23 @@ class Bot:
                 self.cover_goal = None
                 self.cover_recheck = t
 
+        quiet = nearest > 80.0 and t - self.last_hit_time > 3.0 and t - self.last_threat_time > 2.0
+        if self.navigator and goal is None and quiet:
+            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+            if self.patrol_goal and math.hypot(self.patrol_goal[0] - center[0], self.patrol_goal[1] - center[1]) > safe_radius:
+                self.patrol_goal = None
+            if self.patrol_goal and _dist([x, y], self.patrol_goal) <= 10.0:
+                self.patrol_goal = None
+                self.patrol_recheck = t + 4.0
+            if self.patrol_goal is None and t >= self.patrol_recheck:
+                self.patrol_goal = self.navigator.nearby_cover_goal(me["pos"], center, radius, max_distance=72.0, min_distance=32.0)
+                self.patrol_recheck = t + (14.0 if self.patrol_goal else 8.0)
+            if self.patrol_goal:
+                goal = self.patrol_goal
+        elif not quiet:
+            self.patrol_goal = None
+            self.patrol_recheck = t + 6.0
+
         # Opportunistic pickups only when no visible mech is close enough to punish the stop.
         weapons = me.get("weapons", [])
         held = {w["kind"] for w in weapons if w}
@@ -411,6 +430,9 @@ class Bot:
                 waypoint = goal
             if goal:
                 move = _normalize(waypoint[0] - x, waypoint[1] - y)
+        stealth_patrol = self.patrol_goal is not None and goal == self.patrol_goal and quiet
+        if stealth_patrol:
+            move = [move[0] * 0.32, move[1] * 0.32]
         if roof_override:
             move = roof_override[0]
         urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6

@@ -77,12 +77,10 @@ class NavigationTests(unittest.TestCase):
         world = {
             "bounds": {"minX": 0.0, "maxX": 39.0, "minY": 0.0, "maxY": 39.0},
             "terrain": {"minX": 0.0, "minY": 0.0, "step": 1.0, "nx": nx, "ny": ny, "scale": 0.01},
-            "prisms": [{
-                "base": 0.0,
-                "top": 10.0,
-                "ring": [18.0, 0.0, 22.0, 0.0, 22.0, 28.0, 18.0, 28.0],
-                "holes": [],
-            }],
+            "prisms": [
+                {"base": 0.0, "top": 10.0, "ring": [18.0, 0.0, 22.0, 0.0, 22.0, 28.0, 18.0, 28.0], "holes": []},
+                {"base": 0.0, "top": 10.0, "ring": [6.0, 0.0, 10.0, 0.0, 10.0, 28.0, 6.0, 28.0], "holes": []},
+            ],
         }
         heights = array("h", [0] * (nx * ny)).tobytes()
         return MapNavigator(world, heights, grid_step=4.0, radius=1.0, height=3.0)
@@ -102,6 +100,15 @@ class NavigationTests(unittest.TestCase):
         self.assertTrue(path)
         ys = [nav._xy(node)[1] for node in path]
         self.assertGreater(max(ys), 28.0)
+
+    def test_patrol_cover_goal_respects_travel_and_zone_bounds(self):
+        nav = self.make_navigator()
+        goal = nav.nearby_cover_goal([2.0, 20.0], [20.0, 20.0], 60.0, max_distance=30.0, min_distance=12.0)
+        self.assertIsNotNone(goal)
+        self.assertGreaterEqual(math.hypot(goal[0] - 2.0, goal[1] - 20.0), 12.0)
+        self.assertLessEqual(math.hypot(goal[0] - 2.0, goal[1] - 20.0), 30.0)
+        self.assertLessEqual(math.hypot(goal[0] - 20.0, goal[1] - 20.0), 38.0)
+        self.assertGreaterEqual(nav.cover_score(*goal), 2)
 
     def test_blocked_goal_terminates_at_nearest_walkable_node(self):
         nav = self.make_navigator()
