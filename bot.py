@@ -448,7 +448,10 @@ class Bot:
             mech_config = self.config.get("mech", {})
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
+            fire = self._weapon_fire(obs, target, aim, action, selected)
+            # Long-range misses can reveal our position without meaningfully reducing
+            # the time to kill. Keep shots for closer engagements.
+            action["fire"] = fire if nearest <= 70.0 else [False, False]
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:
