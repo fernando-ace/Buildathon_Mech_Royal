@@ -138,10 +138,12 @@ class PolicyTests(unittest.TestCase):
                      "shrink_start": 20.0, "shrink_end": 30.0},
         }
 
-        move = bot.act(obs)["move"]
+        action = bot.act(obs)
+        move = action["move"]
 
         self.assertAlmostEqual(move[0], 0.0, delta=0.01)
         self.assertAlmostEqual(abs(move[1]), 1.0, delta=0.01)
+        self.assertTrue(action["boost"])
 
     def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()

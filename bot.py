@@ -302,6 +302,7 @@ class Bot:
         goal = self._zone_goal(obs)
         target = self._target(obs)
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
+        incoming_attack = False
 
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
         if target and target.get("kind") == "mech" and nearest < 40.0:
@@ -315,8 +316,10 @@ class Bot:
         elif target and target.get("kind") == "mech" and nearest < 150.0:
             target_pos = target["pos"]
             toward_us = math.atan2(y - target_pos[1], x - target_pos[0])
-            target_aim = target.get("aim", [math.inf, 0.0])
-            aiming_at_us = abs(_angle_delta(toward_us, float(target_aim[0]))) < 0.35
+            target_aim = target.get("aim")
+            aim_error = abs(_angle_delta(toward_us, float(target_aim[0]))) if target_aim else math.inf
+            aiming_at_us = aim_error < 0.35
+            incoming_attack = aim_error < 0.16 or bool(target.get("charging"))
             if aiming_at_us or target.get("charging"):
                 # Move across a visible attack line before the shot lands. Keep half of
                 # any existing zone or cover objective so evasion does not undo routing.
@@ -455,7 +458,7 @@ class Bot:
                 move = _normalize(waypoint[0] - x, waypoint[1] - y)
         if roof_override:
             move = roof_override[0]
-        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6
+        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6 or incoming_attack
         action["move"] = move
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if roof_override and roof_override[2]:
