@@ -188,7 +188,8 @@ class Bot:
             hp = float(target.get("hp", target.get("max_hp", 1400)))
             threat_bonus = 45.0 if int(target["id"]) == recent else 0.0
             charge_bonus = 25.0 if target.get("charging") else 0.0
-            return target_distance + 0.025 * hp - threat_bonus - charge_bonus
+            # Prefer a damaged mech enough to convert a good shot into a kill and cubes.
+            return target_distance + 0.05 * hp - threat_bonus - charge_bonus
 
         return min(candidates, key=key)
 

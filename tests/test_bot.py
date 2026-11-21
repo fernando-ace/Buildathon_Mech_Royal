@@ -102,6 +102,14 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["kind"], "mech")
 
+    def test_target_selection_prefers_a_damaged_mech_for_a_finishing_shot(self):
+        bot = self.make_bot()
+        healthy = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "hp": 1400.0}
+        weakened = {"id": 3, "kind": "mech", "pos": [80.0, 0.0, 0.0], "hp": 200.0}
+        obs = {"t": 1.0, "self": {"pos": [0.0, 0.0, 0.0]}, "mechs": [healthy, weakened]}
+
+        self.assertEqual(bot._target(obs)["id"], 3)
+
 
 class NavigationTests(unittest.TestCase):
     def make_navigator(self):
