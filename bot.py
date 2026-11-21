@@ -312,6 +312,22 @@ class Bot:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
             goal = away
+        elif target and target.get("kind") == "mech" and nearest < 150.0:
+            target_pos = target["pos"]
+            toward_us = math.atan2(y - target_pos[1], x - target_pos[0])
+            target_aim = target.get("aim", [math.inf, 0.0])
+            aiming_at_us = abs(_angle_delta(toward_us, float(target_aim[0]))) < 0.35
+            if aiming_at_us or target.get("charging"):
+                # Move across a visible attack line before the shot lands. Keep half of
+                # any existing zone or cover objective so evasion does not undo routing.
+                dx, dy = target_pos[0] - x, target_pos[1] - y
+                length = max(1.0, math.hypot(dx, dy))
+                side = 1.0 if self.slot % 2 == 0 else -1.0
+                evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
+                if goal:
+                    evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
+                    evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
+                goal = evade
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
