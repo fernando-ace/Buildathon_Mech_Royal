@@ -162,6 +162,31 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["kind"], "mech")
 
+    def test_close_range_escape_moves_away_from_multiple_mechs(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        enemies = [
+            {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 1400.0},
+            {"id": 3, "kind": "mech", "pos": [0.0, 20.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 1400.0},
+        ]
+        obs = {
+            "tick": 1, "t": 1.0, "alive": 12.0, "self": me, "mechs": enemies,
+            "events": [], "sounds": [], "beams": [], "projectiles": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertLess(action["move"][0], -0.4)
+        self.assertLess(action["move"][1], -0.4)
+
     def test_target_selection_prefers_a_damaged_mech_for_a_finishing_shot(self):
         bot = self.make_bot()
         healthy = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "hp": 1400.0}

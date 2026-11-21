@@ -392,9 +392,23 @@ class Bot:
             incoming_attack = impact_time < 0.35
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
         elif target and target.get("kind") == "mech" and nearest < 40.0:
-            dx, dy = x - target["pos"][0], y - target["pos"][1]
-            length = max(1.0, math.hypot(dx, dy))
-            away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
+            retreat_x = retreat_y = 0.0
+            for actor in obs.get("mechs", []):
+                if actor.get("kind") != "mech":
+                    continue
+                dx = x - float(actor["pos"][0])
+                dy = y - float(actor["pos"][1])
+                distance = math.hypot(dx, dy)
+                if distance < 80.0:
+                    weight = (80.0 - distance) / max(1.0, distance)
+                    retreat_x += weight * dx
+                    retreat_y += weight * dy
+            length = math.hypot(retreat_x, retreat_y)
+            if length < 1e-6:
+                retreat_x = x - float(target["pos"][0])
+                retreat_y = y - float(target["pos"][1])
+                length = max(1.0, math.hypot(retreat_x, retreat_y))
+            away = [x + 48.0 * retreat_x / length, y + 48.0 * retreat_y / length]
             if goal:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
