@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 from typing import Any
 
 import mechfight as mf
@@ -81,6 +82,9 @@ class Bot:
     def __init__(self, hello: mf.Hello):
         self.config = hello["config"]
         self.slot = int(hello["slot"])
+        self.rng = random.Random(int(hello.get("seed", self.slot)))
+        self.evasion_side = 1.0
+        self.evasion_until = -1.0
         self.last_replan = -100.0
         self.last_zone_key: tuple[float, float, float] | None = None
         self.last_goal: list[float] | None = None
@@ -111,6 +115,15 @@ class Bot:
         center = [zone["center"][i] + alpha * (zone["next_center"][i] - zone["center"][i]) for i in range(2)]
         radius = float(zone["radius"]) + alpha * (float(zone["next_radius"]) - float(zone["radius"]))
         return center, max(0.0, radius)
+
+    def _evasion_side(self, t: float) -> float:
+        if t >= self.evasion_until:
+            if self.evasion_until >= 0.0:
+                self.evasion_side *= -1.0
+            else:
+                self.evasion_side = self.rng.choice((-1.0, 1.0))
+            self.evasion_until = t + self.rng.uniform(0.3, 0.55)
+        return self.evasion_side
 
     def _zone_goal(self, obs: mf.Observation) -> list[float] | None:
         me = obs["self"]
@@ -412,10 +425,7 @@ class Bot:
             target_pos = incoming_threat["pos"]
             dx, dy = target_pos[0] - x, target_pos[1] - y
             length = max(1.0, math.hypot(dx, dy))
-            side = 1.0 if self.slot % 2 == 0 else -1.0
-            period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
-            if int(t / period) % 2:
-                side = -side
+            side = self._evasion_side(t)
             evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
             if goal:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]

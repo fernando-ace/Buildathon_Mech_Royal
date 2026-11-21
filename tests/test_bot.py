@@ -217,6 +217,15 @@ class PolicyTests(unittest.TestCase):
         third = bot.act(obs)["move"][1]
         self.assertLess(second * third, 0.0)
 
+    def test_incoming_attack_evasion_uses_seeded_irregular_switches(self):
+        first_bot = self.make_bot()
+        second_bot = self.make_bot()
+
+        first = first_bot._evasion_side(1.0)
+        self.assertEqual(first, second_bot._evasion_side(1.0))
+        self.assertEqual(first, first_bot._evasion_side(1.1))
+        self.assertEqual(-first, first_bot._evasion_side(first_bot.evasion_until + 0.01))
+
     def test_dodges_a_projectile_on_an_imminent_collision_course(self):
         bot = self.make_bot()
         me = {
