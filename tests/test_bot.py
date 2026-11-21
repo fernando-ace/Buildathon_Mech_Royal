@@ -61,14 +61,6 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(center, [50.0, 0.0])
         self.assertEqual(radius, 50.0)
 
-    def test_evasion_goal_stays_inside_the_safe_zone_margin(self):
-        bot = self.make_bot()
-
-        point = bot._clamp_evasion_to_zone([120.0, 0.0], [0.0, 0.0], 100.0)
-
-        self.assertAlmostEqual(point[0], 92.0)
-        self.assertAlmostEqual(point[1], 0.0)
-
     def test_empty_gun_reloads_even_in_close_combat(self):
         bot = self.make_bot()
         gun = {"kind": "gun", "ammo": 0.0, "reload": 0.0, "stats": {"range": 230.0}}
@@ -110,43 +102,6 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["kind"], "mech")
 
-    def test_retreats_from_a_close_mech_instead_of_staying_on_a_drone(self):
-        bot = self.make_bot()
-        me = {
-            "id": 0, "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
-            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
-            "hp": 1000.0, "max_hp": 1400.0, "energy": 80.0, "grounded": False,
-            "in_zone": True, "weapons": [None, None], "cubes": 0,
-        }
-        mech = {"id": 2, "kind": "mech", "pos": [50.0, 0.0, 0.0], "aim": [0.0, 0.0]}
-        drone = {"id": 1001, "kind": "npc", "pos": [20.0, 0.0, 0.0], "hp": 350.0}
-        bot.current_target_id = 1001
-        obs = {
-            "tick": 1, "t": 5.0, "alive": 12.0, "self": me, "mechs": [mech, drone],
-            "events": [], "sounds": [], "beams": [], "projectiles": [],
-            "pickups": [], "cubes": [], "drops": [], "offer": None,
-            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
-                     "shrink_start": 20.0, "shrink_end": 30.0},
-        }
-
-        action = bot.act(obs)
-
-        self.assertEqual(bot.current_target_id, 2)
-        self.assertLess(action["move"][0], 0.0)
-
-    def test_prefers_nanite_regen_when_health_is_low(self):
-        bot = self.make_bot()
-        bot.config["upgrades"] = [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]
-        obs = {
-            "self": {"hp": 600.0, "max_hp": 1400.0, "weapons": []},
-            "offer": {"choices": [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]},
-        }
-
-        self.assertEqual(bot._choose_upgrade(obs), 1)
-
-        obs["self"]["hp"] = 1400.0
-        self.assertEqual(bot._choose_upgrade(obs), 0)
-
     def test_target_selection_prefers_a_damaged_mech_for_a_finishing_shot(self):
         bot = self.make_bot()
         healthy = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "hp": 1400.0}
@@ -163,19 +118,6 @@ class PolicyTests(unittest.TestCase):
         bot.current_target_id = 2
 
         self.assertEqual(bot._target(obs)["id"], 2)
-
-    def test_farms_a_nearby_crate_only_when_mechs_are_far_and_cubes_are_low(self):
-        bot = self.make_bot()
-        me = {"pos": [0.0, 0.0, 0.0], "cubes": 0.0}
-        crate = {"id": 99, "pos": [55.0, 0.0, 0.0], "hp": 300.0}
-        obs = {"t": 1.0, "self": me, "mechs": [], "crates": [crate]}
-
-        self.assertEqual(bot._target(obs)["kind"], "crate")
-
-        obs["mechs"] = [{"id": 2, "kind": "mech", "pos": [150.0, 0.0, 0.0], "hp": 1400.0}]
-        self.assertEqual(bot._target(obs)["kind"], "mech")
-        me["cubes"] = 6.0
-        self.assertIsNone(bot._target({"t": 1.0, "self": me, "mechs": [], "crates": [crate]}))
 
     def test_strafes_when_a_ranged_mech_is_aiming_at_us(self):
         bot = self.make_bot()
@@ -232,30 +174,6 @@ class PolicyTests(unittest.TestCase):
         self.assertAlmostEqual(abs(action["move"][1]), 1.0, delta=0.01)
         self.assertTrue(action["boost"])
 
-    def test_ignores_a_charging_mech_facing_away(self):
-        bot = self.make_bot()
-        me = {
-            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
-            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
-            "hp": 1000.0, "max_hp": 1400.0, "energy": 80.0, "grounded": False,
-            "in_zone": True, "weapons": [None, None], "cubes": 0,
-        }
-        charger = {
-            "id": 2, "kind": "mech", "pos": [60.0, 0.0, 0.0],
-            "vel": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "charging": True,
-        }
-        obs = {
-            "tick": 1, "t": 5.0, "alive": 12.0, "self": me, "mechs": [charger],
-            "events": [], "sounds": [], "beams": [], "projectiles": [],
-            "pickups": [], "cubes": [], "drops": [], "offer": None,
-            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
-                     "shrink_start": 20.0, "shrink_end": 30.0},
-        }
-
-        action = bot.act(obs)
-
-        self.assertFalse(action["boost"])
-
     def test_ranged_evasion_changes_sides_after_a_short_interval(self):
         bot = self.make_bot()
         me = {
@@ -286,28 +204,6 @@ class PolicyTests(unittest.TestCase):
         third = bot.act(obs)["move"][1]
         self.assertLess(second * third, 0.0)
 
-    def test_incoming_attack_evasion_uses_seeded_irregular_switches(self):
-        first_bot = self.make_bot()
-        second_bot = self.make_bot()
-
-        first = first_bot._evasion_side(1.0)
-        self.assertEqual(first, second_bot._evasion_side(1.0))
-        self.assertEqual(first, first_bot._evasion_side(1.1))
-        self.assertEqual(-first, first_bot._evasion_side(first_bot.evasion_until + 0.01))
-
-    def test_multi_threat_evasion_uses_a_diagonal_between_crossing_attack_lines(self):
-        bot = self.make_bot()
-        me = {"pos": [0.0, 0.0, 0.0], "energy": 100.0, "stats": {"boost_speed": 19.5}}
-        threats = [
-            {"pos": [60.0, 0.0, 0.0], "aim": [math.pi, 0.0], "charging": True},
-            {"pos": [0.0, 60.0, 0.0], "aim": [-math.pi / 2.0, 0.0], "charging": True},
-        ]
-
-        direction = bot._multi_threat_evasion(me, threats, 1.0)
-
-        self.assertGreater(abs(direction[0]), 0.6)
-        self.assertGreater(abs(direction[1]), 0.6)
-
     def test_dodges_a_projectile_on_an_imminent_collision_course(self):
         bot = self.make_bot()
         me = {
@@ -332,36 +228,6 @@ class PolicyTests(unittest.TestCase):
         self.assertLess(action["move"][1], 0.0)
         self.assertTrue(action["boost"])
 
-        projectile["pos"] = [20.0, 2.0, 4.5]
-        obs["tick"] = 2
-        action = bot.act(obs)
-        self.assertTrue(action["boost"])
-
-    def test_dodges_an_unseen_recent_laser_charge_sound(self):
-        bot = self.make_bot()
-        me = {
-            "pos": [0.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
-            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
-            "hp": 1000.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
-            "in_zone": True, "weapons": [None, None], "cubes": 0,
-        }
-        obs = {
-            "tick": 1, "t": 1.0, "alive": 12.0, "self": me, "mechs": [],
-            "events": [], "sounds": [{"kind": "laser_charge", "bearing": 0.0, "dist": "mid", "age": 0.1}],
-            "beams": [], "projectiles": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
-            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
-                     "shrink_start": 20.0, "shrink_end": 30.0},
-        }
-
-        action = bot.act(obs)
-
-        self.assertGreater(abs(action["move"][1]), 0.9)
-        self.assertTrue(action["boost"])
-
-        obs["tick"] = 2
-        obs["sounds"] = [{"kind": "mortar", "bearing": 0.0, "dist": "far", "age": 0.1}]
-        action = bot.act(obs)
-        self.assertFalse(action["boost"])
     def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()
         me = {
@@ -379,30 +245,6 @@ class PolicyTests(unittest.TestCase):
         }
 
         self.assertEqual(bot.act(obs)["move"], [0.0, 0.0])
-
-    def test_collects_a_safe_landed_drop_when_damaged(self):
-        bot = self.make_bot()
-        me = {
-            "id": 0, "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
-            "stats": {"walk_speed": 11.7}, "hp": 700.0, "max_hp": 1400.0,
-            "energy": 80.0, "grounded": False, "in_zone": True, "weapons": [None, None], "cubes": 0,
-        }
-        drop = {"pos": [40.0, 0.0, 0.0], "lands_in": 0.0, "holder": None, "radius": 8.0}
-        obs = {
-            "tick": 1, "t": 110.0, "alive": 12.0, "self": me, "mechs": [],
-            "events": [], "sounds": [], "beams": [], "projectiles": [],
-            "pickups": [], "cubes": [], "drops": [drop], "offer": None,
-            "zone": {"center": [0.0, 0.0], "radius": 200.0, "next_center": [0.0, 0.0], "next_radius": 200.0,
-                     "shrink_start": 200.0, "shrink_end": 230.0},
-        }
-
-        self.assertEqual(bot.act(obs)["move"], [1.0, 0.0])
-
-        me["pos"] = [35.0, 0.0, 0.0]
-        obs["tick"] = 2
-        action = bot.act(obs)
-        self.assertEqual(action["move"], [0.0, 0.0])
-        self.assertFalse(action["boost"])
 
 
 class NavigationTests(unittest.TestCase):
@@ -443,6 +285,19 @@ class NavigationTests(unittest.TestCase):
         waypoint = nav.next_waypoint(list(nav._xy(start)), [20.0, 15.0])
         self.assertIsNotNone(waypoint)
         self.assertNotEqual(waypoint, [20.0, 15.0])
+
+    def test_cover_goal_breaks_ground_sight_from_a_nearby_threat(self):
+        nav = self.make_navigator()
+        threat = {"pos": [0.0, 10.0, 0.0]}
+        start = [10.0, 10.0, 0.0]
+
+        goal = nav.nearby_cover_goal(
+            start, [20.0, 20.0], 40.0, max_distance=30.0,
+            threats=[threat],
+        )
+
+        self.assertIsNotNone(goal)
+        self.assertTrue(nav._blocks_ground_sight(threat["pos"], [goal[0], goal[1], 0.0]))
 
     def test_roof_candidates_respect_energy_reserve(self):
         nx = ny = 40

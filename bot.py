@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import random
 from typing import Any
 
 import mechfight as mf
@@ -82,9 +81,6 @@ class Bot:
     def __init__(self, hello: mf.Hello):
         self.config = hello["config"]
         self.slot = int(hello["slot"])
-        self.rng = random.Random(int(hello.get("seed", self.slot)))
-        self.evasion_side = 1.0
-        self.evasion_until = -1.0
         self.last_replan = -100.0
         self.last_zone_key: tuple[float, float, float] | None = None
         self.last_goal: list[float] | None = None
@@ -102,6 +98,8 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
+        self.threat_cover_goal: list[float] | None = None
+        self.threat_cover_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
 
@@ -115,53 +113,6 @@ class Bot:
         center = [zone["center"][i] + alpha * (zone["next_center"][i] - zone["center"][i]) for i in range(2)]
         radius = float(zone["radius"]) + alpha * (float(zone["next_radius"]) - float(zone["radius"]))
         return center, max(0.0, radius)
-
-    def _evasion_side(self, t: float) -> float:
-        if t >= self.evasion_until:
-            if self.evasion_until >= 0.0:
-                self.evasion_side *= -1.0
-            else:
-                self.evasion_side = self.rng.choice((-1.0, 1.0))
-            self.evasion_until = t + self.rng.uniform(0.3, 0.55)
-        return self.evasion_side
-
-    def _multi_threat_evasion(self, me: dict[str, Any], threats: list[dict[str, Any]], t: float) -> list[float]:
-        """Choose a lateral direction that opens distance from every aimed attack line."""
-        if not threats:
-            return [0.0, 0.0]
-        pos = me["pos"]
-        stats = me.get("stats", {})
-        speed = float(stats.get("boost_speed", 19.5) if float(me.get("energy", 0.0)) > 15.0 else stats.get("walk_speed", 11.7))
-        preferred_side = self._evasion_side(t)
-        primary = threats[0]
-        pdx = float(pos[0]) - float(primary["pos"][0])
-        pdy = float(pos[1]) - float(primary["pos"][1])
-        plen = max(1.0, math.hypot(pdx, pdy))
-        preferred = [-preferred_side * pdy / plen, preferred_side * pdx / plen]
-        best_direction = preferred
-        best_score = -math.inf
-        for index in range(16):
-            angle = 2.0 * math.pi * index / 16.0
-            direction = [math.cos(angle), math.sin(angle)]
-            score = 0.001 * (direction[0] * preferred[0] + direction[1] * preferred[1])
-            for threat in threats:
-                source = threat["pos"]
-                yaw = float(threat.get("aim", [0.0, 0.0])[0])
-                line = [math.cos(yaw), math.sin(yaw)]
-                rx, ry = float(pos[0]) - float(source[0]), float(pos[1]) - float(source[1])
-                along = rx * line[0] + ry * line[1]
-                if along < 0.0:
-                    continue
-                offset = rx * line[1] - ry * line[0]
-                distance = math.hypot(rx, ry)
-                horizon = 0.45 if threat.get("charging") else min(0.65, max(0.15, distance / 252.0))
-                cross = direction[0] * line[1] - direction[1] * line[0]
-                miss_distance = abs(offset + speed * horizon * cross)
-                weight = 1.4 if threat.get("charging") else 1.0
-                score += weight * min(60.0, miss_distance)
-            if score > best_score:
-                best_score, best_direction = score, direction
-        return best_direction
 
     def _zone_goal(self, obs: mf.Observation) -> list[float] | None:
         me = obs["self"]
@@ -177,17 +128,28 @@ class Bot:
             return center
         return [center[0] + dx * safe_radius / distance, center[1] + dy * safe_radius / distance]
 
-    def _clamp_evasion_to_zone(self, point: list[float], center: list[float], radius: float) -> list[float]:
-        if radius < 40.0:
-            return point
-        margin = min(22.0, max(8.0, radius * 0.08))
-        safe_radius = max(0.0, radius - margin)
-        dx, dy = point[0] - center[0], point[1] - center[1]
-        distance = math.hypot(dx, dy)
-        if distance <= safe_radius or distance < 1e-6:
-            return point
-        scale = safe_radius / distance
-        return [center[0] + dx * scale, center[1] + dy * scale]
+    def _threat_cover_goal(
+        self,
+        me: dict[str, Any],
+        threats: list[dict[str, Any]],
+        center: list[float],
+        radius: float,
+        t: float,
+    ) -> list[float] | None:
+        if t < self.threat_cover_recheck:
+            return self.threat_cover_goal
+        self.threat_cover_recheck = t + 0.5
+        self.threat_cover_goal = None
+        if self.navigator:
+            nearby = [
+                actor for actor in threats
+                if actor.get("kind") == "mech" and _dist(me["pos"], actor["pos"]) <= 180.0
+            ]
+            if nearby:
+                self.threat_cover_goal = self.navigator.nearby_cover_goal(
+                    me["pos"], center, radius, max_distance=96.0, threats=nearby,
+                )
+        return self.threat_cover_goal
 
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
@@ -197,10 +159,10 @@ class Bot:
         hp_ratio = float(obs["self"]["hp"]) / max(1.0, float(obs["self"]["max_hp"]))
         score = {
             "armor": 12.0,
-            "plating": 11.2 + (2.0 if hp_ratio < 0.75 else 0.0),
-            "nanites": 10.2 + (3.5 if hp_ratio < 0.9 else 0.0),
-            "servos": 9.5,
-            "jets": 9.0,
+            "plating": 10.5 + (2.0 if hp_ratio < 0.75 else 0.0),
+            "nanites": 9.5 + (1.0 if hp_ratio < 0.8 else 0.0),
+            "servos": 9.0,
+            "jets": 8.5,
             "reactor": 8.0,
             "capacitor": 7.5,
             "sensors": 7.0,
@@ -299,30 +261,16 @@ class Bot:
             # Prefer a damaged mech enough to convert a good shot into a kill and cubes.
             return target_distance + 0.05 * hp - threat_bonus - charge_bonus
 
-        if npc and (mech is None or distance(mech) >= 60.0):
+        if npc and (mech is None or distance(mech) >= 40.0):
             selected = npc
-        elif mech and distance(mech) <= 170.0:
+        elif mech:
             selected = min(candidates, key=key)
         else:
-            crate = min(
-                (
-                    c for c in obs.get("crates", [])
-                    if float(c.get("hp", 0.0)) > 0.0
-                    and _dist(me["pos"], c["pos"]) <= 100.0
-                    and float(me.get("cubes", 0.0)) < 6.0
-                ),
-                key=lambda c: _dist(me["pos"], c["pos"]),
-                default=None,
-            )
-            if crate is None:
-                self.current_target_id = None
-                return None
-            selected = {**crate, "kind": "crate"}
+            self.current_target_id = None
+            return None
 
         current = next((m for m in actors if int(m["id"]) == self.current_target_id and m.get("kind") == selected.get("kind")), None)
-        if current and key(current) <= key(selected) + 20.0 and not (
-            current.get("kind") == "npc" and selected.get("kind") == "mech" and distance(selected) < 60.0
-        ):
+        if current and key(current) <= key(selected) + 20.0:
             selected = current
         self.current_target_id = int(selected["id"])
         return selected
@@ -403,11 +351,6 @@ class Bot:
                 if attacker is not None:
                     self.last_attacker = int(attacker)
         recent_sounds = [s for s in obs.get("sounds", []) if float(s.get("age", 99.0)) <= 0.8 and s.get("bearing") is not None]
-        warning_sounds = [
-            s for s in recent_sounds
-            if s.get("kind") in ("laser_charge", "mortar") and float(s.get("age", 99.0)) <= 0.45
-        ]
-        warning_sound = min(warning_sounds, key=lambda s: float(s.get("age", 99.0))) if warning_sounds else None
         if recent_sounds:
             sound_priority = {"explosion": 0, "mortar": 1, "laser": 2, "lightning": 3, "gun": 4, "npc_gun": 5, "boost": 6, "jet": 7, "step": 8}
             sound = min(recent_sounds, key=lambda s: (float(s.get("age", 99.0)), sound_priority.get(s.get("kind"), 9)))
@@ -433,9 +376,9 @@ class Bot:
         target = self._target(obs)
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
         projectile_threat = self._projectile_threat(obs)
+        hide_from_threat = False
         incoming_attack = False
         incoming_threat: dict[str, Any] | None = None
-        incoming_threats: list[dict[str, Any]] = []
         incoming_aim_error = math.inf
         incoming_charging = False
         threat_score = math.inf
@@ -451,8 +394,7 @@ class Bot:
                 toward_us = math.atan2(y - actor["pos"][1], x - actor["pos"][0])
                 aim_error = abs(_angle_delta(toward_us, float(actor_aim[0])))
             charging = bool(actor.get("charging"))
-            if aim_error < 0.35:
-                incoming_threats.append(actor)
+            if aim_error < 0.35 or charging:
                 score = (0.0 if charging else 1.0) + aim_error + threat_distance * 0.001
                 if score < threat_score:
                     incoming_threat = actor
@@ -466,41 +408,43 @@ class Bot:
             if goal:
                 dodge[0] = 0.8 * dodge[0] + 0.2 * goal[0]
                 dodge[1] = 0.8 * dodge[1] + 0.2 * goal[1]
-            goal = self._clamp_evasion_to_zone(dodge, center, radius)
-            incoming_attack = impact_time < 0.55
-        # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        elif target and target.get("kind") == "mech" and nearest < 60.0:
-            dx, dy = x - target["pos"][0], y - target["pos"][1]
-            length = max(1.0, math.hypot(dx, dy))
-            away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
-            if goal:
-                away[0] = 0.8 * away[0] + 0.2 * goal[0]
-                away[1] = 0.8 * away[1] + 0.2 * goal[1]
-            goal = self._clamp_evasion_to_zone(away, center, radius)
+            goal = dodge
+            incoming_attack = impact_time < 0.35
         elif incoming_threat:
             incoming_attack = incoming_aim_error < 0.16 or incoming_charging
-            # Move across a visible attack line before the shot lands. Keep half of
-            # any existing zone or cover objective so evasion does not undo routing.
-            direction = self._multi_threat_evasion(me, incoming_threats, t)
-            evade = [x + 36.0 * direction[0], y + 36.0 * direction[1]]
-            if goal:
-                evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
-                evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
-            goal = self._clamp_evasion_to_zone(evade, center, radius)
-        elif warning_sound:
-            # An audible charge or mortar launch can reveal an attacker outside
-            # vision. Cross that firing line briefly while preserving zone travel.
-            bearing = float(warning_sound["bearing"])
-            side = self._evasion_side(t)
-            evade = [x - side * 36.0 * math.sin(bearing), y + side * 36.0 * math.cos(bearing)]
-            if goal:
-                evade[0] = 0.65 * evade[0] + 0.35 * goal[0]
-                evade[1] = 0.65 * evade[1] + 0.35 * goal[1]
-            goal = self._clamp_evasion_to_zone(evade, center, radius)
-            incoming_attack = (
-                float(warning_sound.get("age", 99.0)) < 0.35
-                and (warning_sound.get("kind") == "laser_charge" or warning_sound.get("dist") == "near")
-            )
+            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
+            if cover:
+                goal = cover
+                hide_from_threat = True
+            else:
+                # Move across a visible attack line before the shot lands. Keep half of
+                # any existing zone objective so evasion does not undo routing.
+                target_pos = incoming_threat["pos"]
+                dx, dy = target_pos[0] - x, target_pos[1] - y
+                length = max(1.0, math.hypot(dx, dy))
+                side = 1.0 if self.slot % 2 == 0 else -1.0
+                period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
+                if int(t / period) % 2:
+                    side = -side
+                evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
+                if goal:
+                    evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
+                    evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
+                goal = evade
+        # Prefer cover that breaks the shooter's line of sight when a mech closes.
+        elif target and target.get("kind") == "mech" and nearest < 100.0:
+            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
+            if cover:
+                goal = cover
+                hide_from_threat = True
+            elif nearest < 40.0:
+                dx, dy = x - target["pos"][0], y - target["pos"][1]
+                length = max(1.0, math.hypot(dx, dy))
+                away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
+                if goal:
+                    away[0] = 0.8 * away[0] + 0.2 * goal[0]
+                    away[1] = 0.8 * away[1] + 0.2 * goal[1]
+                goal = away
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
@@ -541,29 +485,19 @@ class Bot:
                 if _dist(me["pos"], cube["pos"]) > 3.0:
                     goal = cube["pos"][:2]
 
-        # A landed drop can restore a damaged mech and provide three upgrade
-        # cubes. Take a nearby one during a lull, but never chase it outside the
-        # projected safe circle or toward a visible fight.
-        drop_capture = False
-        damaged = float(me["max_hp"]) - float(me["hp"])
-        if nearest > 100.0 and t - self.last_hit_time > 2.5 and (damaged >= 300.0 or float(me.get("cubes", 0.0)) < 4.0):
-            my_id = int(me.get("id", -1))
-            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+        # Drops heal and award three cubes, but waiting for a quiet one avoids
+        # interrupting zone travel and inviting a fight while it is contested.
+        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
             drops = [
                 d for d in obs.get("drops", [])
                 if float(d.get("lands_in", 99.0)) <= 0.0
-                and d.get("holder") in (None, my_id)
-                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= safe_radius
-                and _dist(me["pos"], d["pos"]) <= 75.0
+                and d.get("holder") is None
+                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)
             ]
             if drops:
                 drop = min(drops, key=lambda d: _dist(me["pos"], d["pos"]))
                 if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:
                     goal = drop["pos"][:2]
-                else:
-                    # Remain inside the capture ring for its full hold time.
-                    goal = None
-                    drop_capture = True
 
         roof_override: tuple[list[float], bool, bool] | None = None
         if self.roof_state is None and self.navigator and goal is None and nearest > 120.0 and float(obs.get("alive", 16.0)) > 4.0 and self.navigator.cover_score(x, y) < 2 and t >= self.roof_recheck:
@@ -641,9 +575,6 @@ class Bot:
         urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6 or incoming_attack
         action["move"] = move
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
-        if drop_capture and not urgent:
-            action["move"] = [0.0, 0.0]
-            action["boost"] = False
         if roof_override and roof_override[2]:
             action["jump"] = True
 
@@ -654,15 +585,10 @@ class Bot:
 
         aim = list(me.get("aim", [0.0, 0.0]))
         if target:
-            if target.get("kind") == "crate":
-                selected = next(((i, w) for i, w in enumerate(weapons[:2]) if w and w.get("kind") == "gun"), None)
-            else:
-                selected = self._select_weapon(obs, target)
+            selected = self._select_weapon(obs, target)
             selected_kind = selected[1].get("kind") if selected else "gun"
             if target.get("kind") == "npc":
                 target_height = float(self.config.get("npc", {}).get("height", 3.5)) * 0.5
-            elif target.get("kind") == "crate":
-                target_height = float(self.config.get("crates", {}).get("height", 2.4)) * 0.5
             else:
                 target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
             if selected_kind == "mortar" and selected:
@@ -685,6 +611,8 @@ class Bot:
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
             action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
+            if hide_from_threat:
+                action["fire"] = [False, False]
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:
