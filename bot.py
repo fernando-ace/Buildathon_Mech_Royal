@@ -88,6 +88,7 @@ class Bot:
         self.last_threat_time = -100.0
         self.last_hit_time = -100.0
         self.last_attacker: int | None = None
+        self.last_jump_time = -100.0
         mech_config = self.config.get("mech", {})
         self.navigator: MapNavigator | None = load_navigator(
             hello.get("map", {}).get("dir", ""),
@@ -329,13 +330,10 @@ class Bot:
         held = {w["kind"] for w in weapons if w}
         if nearest > 60.0 and (len(weapons) < 2 or not weapons[1]):
             reach = float(self.config["loot"].get("pickup_radius", 4.0))
-            choices = [p for p in obs.get("pickups", []) if p.get("kind") not in held and _dist(me["pos"], p["pos"]) <= 45.0]
+            choices = [p for p in obs.get("pickups", []) if p.get("kind") not in held and _dist(me["pos"], p["pos"]) <= reach]
             if choices:
                 pickup = min(choices, key=lambda p: _dist(me["pos"], p["pos"]))
-                if _dist(me["pos"], pickup["pos"]) <= reach:
-                    action["take"] = pickup["id"]
-                else:
-                    goal = pickup["pos"][:2]
+                action["take"] = pickup["id"]
 
         # Cubes are valuable while below the ten-cube damage/health cap, but not worth
         # crossing an unsafe circle or walking into a nearby fight to collect.
@@ -434,6 +432,11 @@ class Bot:
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if roof_override and roof_override[2]:
             action["jump"] = True
+        elif me.get("grounded", False) and (int(obs["tick"]) % 40 == 0 or (t - self.last_hit_time <= 1.0 and t - self.last_jump_time >= 0.8)):
+            # Keep the starter kit's four-second hop cadence and add one quick dodge
+            # after taking fire; a grounded mech is much easier to lead.
+            action["jump"] = True
+            self.last_jump_time = t
 
         if target is None and t - self.last_hit_time > 0.5:
             gun = next((w for w in weapons if w and w.get("kind") == "gun"), None)

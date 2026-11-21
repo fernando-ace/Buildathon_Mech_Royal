@@ -111,6 +111,38 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._choose_upgrade(obs), 1)
 
+    def test_far_pickup_does_not_interrupt_future_zone_route(self):
+        bot = self.make_bot()
+        gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {}}
+        me = {
+            "pos": [100.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {}, "hp": 1400.0, "max_hp": 1400.0,
+            "energy": 100.0, "grounded": False, "in_zone": True, "cubes": 0, "weapons": [gun, None],
+        }
+        obs = {
+            "t": 5.0, "tick": 50, "alive": 16.0, "self": me, "mechs": [], "events": [], "sounds": [], "beams": [],
+            "pickups": [{"id": 9, "kind": "laser", "pos": [110.0, 0.0, 0.0]}], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [100.0, 0.0], "radius": 200.0, "next_center": [0.0, 0.0], "next_radius": 50.0, "shrink_start": 10.0, "shrink_end": 20.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertLess(action["move"][0], 0.0)
+        self.assertNotIn("take", action)
+
+    def test_grounded_mech_jumps_on_four_second_cadence(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {}, "hp": 1400.0, "max_hp": 1400.0,
+            "energy": 100.0, "grounded": True, "in_zone": True, "cubes": 0, "weapons": [None, None],
+        }
+        obs = {
+            "t": 4.0, "tick": 40, "alive": 16.0, "self": me, "mechs": [], "events": [], "sounds": [], "beams": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0, "shrink_start": 10.0, "shrink_end": 20.0},
+        }
+
+        self.assertTrue(bot.act(obs)["jump"])
+
 
 class NavigationTests(unittest.TestCase):
     def make_navigator(self):
