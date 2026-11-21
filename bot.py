@@ -287,7 +287,7 @@ class Bot:
             # Prefer a damaged mech enough to convert a good shot into a kill and cubes.
             return target_distance + 0.05 * hp - threat_bonus - charge_bonus
 
-        if npc and (mech is None or distance(mech) >= 40.0):
+        if npc and (mech is None or distance(mech) >= 60.0):
             selected = npc
         elif mech and distance(mech) <= 170.0:
             selected = min(candidates, key=key)
@@ -308,7 +308,9 @@ class Bot:
             selected = {**crate, "kind": "crate"}
 
         current = next((m for m in actors if int(m["id"]) == self.current_target_id and m.get("kind") == selected.get("kind")), None)
-        if current and key(current) <= key(selected) + 20.0:
+        if current and key(current) <= key(selected) + 20.0 and not (
+            current.get("kind") == "npc" and selected.get("kind") == "mech" and distance(selected) < 60.0
+        ):
             selected = current
         self.current_target_id = int(selected["id"])
         return selected
@@ -450,7 +452,7 @@ class Bot:
             goal = dodge
             incoming_attack = impact_time < 0.55
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        elif target and target.get("kind") == "mech" and nearest < 40.0:
+        elif target and target.get("kind") == "mech" and nearest < 60.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
             length = max(1.0, math.hypot(dx, dy))
             away = [x + 48.0 * dx / length, y + 48.0 * dy / length]

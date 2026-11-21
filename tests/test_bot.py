@@ -102,6 +102,30 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["kind"], "mech")
 
+    def test_retreats_from_a_close_mech_instead_of_staying_on_a_drone(self):
+        bot = self.make_bot()
+        me = {
+            "id": 0, "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1000.0, "max_hp": 1400.0, "energy": 80.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        mech = {"id": 2, "kind": "mech", "pos": [50.0, 0.0, 0.0], "aim": [0.0, 0.0]}
+        drone = {"id": 1001, "kind": "npc", "pos": [20.0, 0.0, 0.0], "hp": 350.0}
+        bot.current_target_id = 1001
+        obs = {
+            "tick": 1, "t": 5.0, "alive": 12.0, "self": me, "mechs": [mech, drone],
+            "events": [], "sounds": [], "beams": [], "projectiles": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertEqual(bot.current_target_id, 2)
+        self.assertLess(action["move"][0], 0.0)
+
     def test_prefers_nanite_regen_when_health_is_low(self):
         bot = self.make_bot()
         bot.config["upgrades"] = [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]
