@@ -448,11 +448,7 @@ class Bot:
             mech_config = self.config.get("mech", {})
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            # Damage both given and received resets the long passive heal delay.
-            # Placement bots should avoid advertising themselves or trading shots
-            # unless the policy is explicitly changed after live-score evidence.
-            self._weapon_fire(obs, target, aim, action, selected)
-            action["fire"] = [False, False]
+            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:

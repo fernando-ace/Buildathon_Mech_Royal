@@ -40,7 +40,6 @@ class PolicyTests(unittest.TestCase):
             "config": {
                 "mech": {},
                 "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
-                "loot": {"pickup_radius": 4.0},
                 "upgrades": [],
             },
         }
@@ -70,27 +69,6 @@ class PolicyTests(unittest.TestCase):
         fire = bot._weapon_fire(obs, target, [0.0, 0.0], action, (0, gun))
         self.assertEqual(fire, [False, False])
         self.assertTrue(action["reload"])
-
-    def test_placement_policy_does_not_fire_at_visible_targets(self):
-        bot = self.make_bot()
-        gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {"range": 230.0, "speed": 252.0}}
-        me = {
-            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
-            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
-            "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
-            "in_zone": True, "weapons": [gun, None], "cubes": 0,
-        }
-        target = {"id": 1, "kind": "mech", "pos": [100.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 1400.0}
-        obs = {
-            "tick": 1, "t": 0.1, "alive": 16.0, "self": me, "mechs": [target],
-            "events": [], "sounds": [], "beams": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
-            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
-                     "shrink_start": 20.0, "shrink_end": 30.0},
-        }
-
-        action = bot.act(obs)
-
-        self.assertEqual(action["fire"], [False, False])
 
 
 class NavigationTests(unittest.TestCase):
