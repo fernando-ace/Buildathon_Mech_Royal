@@ -102,8 +102,6 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
-        self.threat_cover_goal: list[float] | None = None
-        self.threat_cover_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
 
@@ -225,30 +223,6 @@ class Bot:
             return point
         scale = safe_radius / distance
         return [center[0] + dx * scale, center[1] + dy * scale]
-
-    def _threat_cover_goal(
-        self,
-        me: dict[str, Any],
-        threats: list[dict[str, Any]],
-        center: list[float],
-        radius: float,
-        t: float,
-    ) -> list[float] | None:
-        if not self.navigator or t < self.threat_cover_recheck:
-            return self.threat_cover_goal
-        self.threat_cover_recheck = t + 0.5
-        self.threat_cover_goal = None
-        nearby = [
-            actor for actor in threats
-            if actor.get("kind") == "mech" and _dist(me["pos"], actor["pos"]) <= 180.0
-        ]
-        if not nearby:
-            return None
-        self.threat_cover_goal = self.navigator.nearby_cover_goal(
-            me["pos"], center, radius, max_distance=96.0,
-            min_cover_score=1, threats=nearby,
-        )
-        return self.threat_cover_goal
 
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
@@ -531,43 +505,31 @@ class Bot:
             incoming_attack = impact_time < 0.55
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
         elif target and target.get("kind") == "mech" and nearest < 60.0:
-            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
-            if cover:
-                goal = cover
-            else:
-                dx, dy = x - target["pos"][0], y - target["pos"][1]
-                length = max(1.0, math.hypot(dx, dy))
-                away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
-                if goal:
-                    away[0] = 0.8 * away[0] + 0.2 * goal[0]
-                    away[1] = 0.8 * away[1] + 0.2 * goal[1]
-                goal = self._clamp_evasion_to_zone(away, center, radius)
+            dx, dy = x - target["pos"][0], y - target["pos"][1]
+            length = max(1.0, math.hypot(dx, dy))
+            away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
+            if goal:
+                away[0] = 0.8 * away[0] + 0.2 * goal[0]
+                away[1] = 0.8 * away[1] + 0.2 * goal[1]
+            goal = self._clamp_evasion_to_zone(away, center, radius)
         elif incoming_threat:
             incoming_attack = incoming_aim_error < 0.16 or incoming_charging
-            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
-            if cover:
-                goal = cover
-            else:
-                # Move across a visible attack line before the shot lands. Keep half
-                # of an existing zone objective so evasion does not undo routing.
-                direction = self._multi_threat_evasion(me, incoming_threats, t)
-                evade = [x + 36.0 * direction[0], y + 36.0 * direction[1]]
-                if goal:
-                    evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
-                    evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
-                goal = self._clamp_evasion_to_zone(evade, center, radius)
+            # Move across a visible attack line before the shot lands. Keep half of
+            # any existing zone or cover objective so evasion does not undo routing.
+            direction = self._multi_threat_evasion(me, incoming_threats, t)
+            evade = [x + 36.0 * direction[0], y + 36.0 * direction[1]]
+            if goal:
+                evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
+                evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
+            goal = self._clamp_evasion_to_zone(evade, center, radius)
         elif any(actor.get("kind") == "mech" and _dist(me["pos"], actor["pos"]) < 110.0 for actor in obs.get("mechs", [])):
             # Don't wait for the nearest opponent to finish aiming before leaving.
             nearby_mechs = [actor for actor in obs.get("mechs", []) if actor.get("kind") == "mech"]
-            cover = self._threat_cover_goal(me, nearby_mechs, center, radius, t)
-            if cover:
-                goal = cover
-            else:
-                escape = self._escape_goal(me, nearby_mechs)
-                if goal:
-                    escape[0] = 0.8 * escape[0] + 0.2 * goal[0]
-                    escape[1] = 0.8 * escape[1] + 0.2 * goal[1]
-                goal = self._clamp_evasion_to_zone(escape, center, radius)
+            escape = self._escape_goal(me, nearby_mechs)
+            if goal:
+                escape[0] = 0.8 * escape[0] + 0.2 * goal[0]
+                escape[1] = 0.8 * escape[1] + 0.2 * goal[1]
+            goal = self._clamp_evasion_to_zone(escape, center, radius)
         elif warning_sound:
             # An audible charge or mortar launch can reveal an attacker outside
             # vision. Cross that firing line briefly while preserving zone travel.

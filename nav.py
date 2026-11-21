@@ -348,30 +348,6 @@ class MapNavigator:
         node = self._nearest_open(x, y)
         return int(self._cover[node]) if node is not None else 0
 
-    def _blocks_ground_sight(self, start: list[float], end: list[float]) -> bool:
-        """Return whether a static building blocks a ground-level shot segment."""
-        dx, dy = end[0] - start[0], end[1] - start[1]
-        distance = math.hypot(dx, dy)
-        steps = max(2, int(math.ceil(distance / max(2.0, self.grid_step))))
-        start_z = float(start[2]) + self.height * 0.5 if len(start) > 2 else self.height * 0.5
-        end_z = float(end[2]) + self.height * 0.5 if len(end) > 2 else self.height * 0.5
-        min_x, max_x = sorted((start[0], end[0]))
-        min_y, max_y = sorted((start[1], end[1]))
-        for pmin_x, pmax_x, pmin_y, pmax_y, base, top, ring, holes in self._prisms:
-            if top <= min(start_z, end_z) or base >= max(start_z, end_z) + self.height:
-                continue
-            if pmax_x < min_x or pmin_x > max_x or pmax_y < min_y or pmin_y > max_y:
-                continue
-            for step in range(1, steps):
-                t = step / steps
-                x, y = start[0] + t * dx, start[1] + t * dy
-                z = start_z + t * (end_z - start_z)
-                if z < base or z > top:
-                    continue
-                if point_in_ring(x, y, ring) and not any(point_in_ring(x, y, hole) for hole in holes):
-                    return True
-        return False
-
     def nearby_cover_goal(
         self,
         position: list[float],
@@ -379,43 +355,22 @@ class MapNavigator:
         radius: float,
         max_distance: float = 72.0,
         min_cover_score: int = 2,
-        threats: list[dict[str, Any]] | None = None,
     ) -> list[float] | None:
         safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
         best: tuple[float, int] | None = None
-        ix0 = max(0, int(math.floor((position[0] - max_distance - self.origin_x) / self.grid_step)))
-        ix1 = min(self.width - 1, int(math.ceil((position[0] + max_distance - self.origin_x) / self.grid_step)))
-        iy0 = max(0, int(math.floor((position[1] - max_distance - self.origin_y) / self.grid_step)))
-        iy1 = min(self.height_count - 1, int(math.ceil((position[1] + max_distance - self.origin_y) / self.grid_step)))
-        close_threats = sorted(
-            (t for t in (threats or []) if len(t.get("pos", [])) >= 2
-             and math.hypot(t["pos"][0] - position[0], t["pos"][1] - position[1]) <= 180.0),
-            key=lambda t: math.hypot(t["pos"][0] - position[0], t["pos"][1] - position[1]),
-        )[:5]
-        for iy in range(iy0, iy1 + 1):
-            for ix in range(ix0, ix1 + 1):
-                node = self._id(ix, iy)
-                cover = self._cover[node]
-                if cover < min_cover_score or self._blocked[node]:
-                    continue
-                x, y = self._xy(node)
-                travel = math.hypot(x - position[0], y - position[1])
-                if travel > max_distance or math.hypot(x - center[0], y - center[1]) > safe_radius:
-                    continue
-                # Prefer nearby positions protected by more than one obstruction.
-                score = travel - min(12.0, float(cover) * 3.0)
-                if close_threats:
-                    blocked_weight = 0.0
-                    end = [x, y, self._ground[node]]
-                    for threat in close_threats:
-                        source = threat["pos"]
-                        if self._blocks_ground_sight(source, end):
-                            distance_to_threat = math.hypot(source[0] - x, source[1] - y)
-                            blocked_weight += 1.0 + max(0.0, 120.0 - distance_to_threat) / 120.0
-                    if blocked_weight:
-                        score -= 70.0 * blocked_weight
-                if best is None or score < best[0]:
-                    best = (score, node)
+        for node, cover in enumerate(self._cover):
+            if cover < min_cover_score or self._blocked[node]:
+                continue
+            x, y = self._xy(node)
+            travel = math.hypot(x - position[0], y - position[1])
+            if travel > max_distance:
+                continue
+            if math.hypot(x - center[0], y - center[1]) > safe_radius:
+                continue
+            # Prefer nearby positions protected by more than one obstruction.
+            score = travel - min(12.0, float(cover) * 3.0)
+            if best is None or score < best[0]:
+                best = (score, node)
         return list(self._xy(best[1])) if best else None
 
 
