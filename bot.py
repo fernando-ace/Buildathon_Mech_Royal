@@ -81,6 +81,12 @@ class Bot:
     def __init__(self, hello: mf.Hello):
         self.config = hello["config"]
         self.slot = int(hello["slot"])
+        weapon_ranges = [
+            float(weapon.get("range", 0.0))
+            for weapon in self.config.get("weapons", {}).values()
+            if isinstance(weapon, dict)
+        ]
+        self.threat_range = max([150.0, *weapon_ranges])
         self.last_replan = -100.0
         self.last_zone_key: tuple[float, float, float] | None = None
         self.last_goal: list[float] | None = None
@@ -360,7 +366,7 @@ class Bot:
             if actor.get("kind") != "mech":
                 continue
             threat_distance = _dist(me["pos"], actor["pos"])
-            if threat_distance >= 150.0:
+            if threat_distance >= self.threat_range:
                 continue
             actor_aim = actor.get("aim")
             aim_error = math.inf

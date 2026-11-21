@@ -39,7 +39,7 @@ class PolicyTests(unittest.TestCase):
             "map": {"dir": ""},
             "config": {
                 "mech": {},
-                "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
+                "weapons": {"gun": {}, "mortar": {"gravity": 22.0}, "laser": {"range": 280.0}},
                 "npc": {"aggro_range": 45.0, "height": 3.5},
                 "loot": {"pickup_radius": 4.0},
                 "upgrades": [],
@@ -105,6 +105,32 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(action["move"], [0.0, 0.0])
         self.assertTrue(action["fire"][0])
+
+    def test_evades_a_charging_laser_at_180_meters(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": True,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        attacker = {
+            "id": 10, "kind": "mech", "pos": [180.0, 0.0, 0.0],
+            "vel": [0.0, 0.0, 0.0], "aim": [math.pi, 0.0], "charging": True,
+        }
+        obs = {
+            "tick": 1, "t": 0.1, "alive": 16.0, "self": me, "mechs": [attacker],
+            "events": [], "sounds": [], "beams": [], "projectiles": [],
+            "pickups": [], "cubes": [], "crates": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 300.0, "next_center": [0.0, 0.0], "next_radius": 300.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertTrue(action["boost"])
+        self.assertLess(abs(action["move"][0]), 0.1)
+        self.assertGreater(abs(action["move"][1]), 0.9)
 
     def test_close_mech_keeps_priority_over_a_drone(self):
         bot = self.make_bot()
