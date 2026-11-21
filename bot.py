@@ -238,11 +238,23 @@ class Bot:
 
         if npc and (mech is None or distance(mech) >= 40.0):
             selected = npc
-        elif mech:
+        elif mech and distance(mech) <= 170.0:
             selected = min(candidates, key=key)
         else:
-            self.current_target_id = None
-            return None
+            crate = min(
+                (
+                    c for c in obs.get("crates", [])
+                    if float(c.get("hp", 0.0)) > 0.0
+                    and _dist(me["pos"], c["pos"]) <= 100.0
+                    and float(me.get("cubes", 0.0)) < 6.0
+                ),
+                key=lambda c: _dist(me["pos"], c["pos"]),
+                default=None,
+            )
+            if crate is None:
+                self.current_target_id = None
+                return None
+            selected = {**crate, "kind": "crate"}
 
         current = next((m for m in actors if int(m["id"]) == self.current_target_id and m.get("kind") == selected.get("kind")), None)
         if current and key(current) <= key(selected) + 20.0:
@@ -581,10 +593,15 @@ class Bot:
 
         aim = list(me.get("aim", [0.0, 0.0]))
         if target:
-            selected = self._select_weapon(obs, target)
+            if target.get("kind") == "crate":
+                selected = next(((i, w) for i, w in enumerate(weapons[:2]) if w and w.get("kind") == "gun"), None)
+            else:
+                selected = self._select_weapon(obs, target)
             selected_kind = selected[1].get("kind") if selected else "gun"
             if target.get("kind") == "npc":
                 target_height = float(self.config.get("npc", {}).get("height", 3.5)) * 0.5
+            elif target.get("kind") == "crate":
+                target_height = float(self.config.get("crates", {}).get("height", 2.4)) * 0.5
             else:
                 target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
             if selected_kind == "mortar" and selected:

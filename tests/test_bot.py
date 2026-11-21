@@ -119,6 +119,19 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["id"], 2)
 
+    def test_farms_a_nearby_crate_only_when_mechs_are_far_and_cubes_are_low(self):
+        bot = self.make_bot()
+        me = {"pos": [0.0, 0.0, 0.0], "cubes": 0.0}
+        crate = {"id": 99, "pos": [55.0, 0.0, 0.0], "hp": 300.0}
+        obs = {"t": 1.0, "self": me, "mechs": [], "crates": [crate]}
+
+        self.assertEqual(bot._target(obs)["kind"], "crate")
+
+        obs["mechs"] = [{"id": 2, "kind": "mech", "pos": [150.0, 0.0, 0.0], "hp": 1400.0}]
+        self.assertEqual(bot._target(obs)["kind"], "mech")
+        me["cubes"] = 6.0
+        self.assertIsNone(bot._target({"t": 1.0, "self": me, "mechs": [], "crates": [crate]}))
+
     def test_strafes_when_a_ranged_mech_is_aiming_at_us(self):
         bot = self.make_bot()
         me = {
