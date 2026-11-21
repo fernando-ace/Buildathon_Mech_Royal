@@ -449,19 +449,29 @@ class Bot:
                 if _dist(me["pos"], cube["pos"]) > 3.0:
                     goal = cube["pos"][:2]
 
-        # Drops heal and award three cubes, but waiting for a quiet one avoids
-        # interrupting zone travel and inviting a fight while it is contested.
-        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
+        # A landed drop can restore a damaged mech and provide three upgrade
+        # cubes. Take a nearby one during a lull, but never chase it outside the
+        # projected safe circle or toward a visible fight.
+        drop_capture = False
+        damaged = float(me["max_hp"]) - float(me["hp"])
+        if nearest > 100.0 and t - self.last_hit_time > 2.5 and (damaged >= 300.0 or float(me.get("cubes", 0.0)) < 4.0):
+            my_id = int(me.get("id", -1))
+            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
             drops = [
                 d for d in obs.get("drops", [])
                 if float(d.get("lands_in", 99.0)) <= 0.0
-                and d.get("holder") is None
-                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)
+                and d.get("holder") in (None, my_id)
+                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= safe_radius
+                and _dist(me["pos"], d["pos"]) <= 75.0
             ]
             if drops:
                 drop = min(drops, key=lambda d: _dist(me["pos"], d["pos"]))
                 if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:
                     goal = drop["pos"][:2]
+                else:
+                    # Remain inside the capture ring for its full hold time.
+                    goal = None
+                    drop_capture = True
 
         roof_override: tuple[list[float], bool, bool] | None = None
         if self.roof_state is None and self.navigator and goal is None and nearest > 120.0 and float(obs.get("alive", 16.0)) > 4.0 and self.navigator.cover_score(x, y) < 2 and t >= self.roof_recheck:
@@ -524,7 +534,7 @@ class Bot:
                 roof_override = ([0.0, 0.0], False, False)
 
         opportunistic_strafe = False
-        if goal is None and target is not None and 40.0 <= nearest <= 170.0 and radius > 75.0:
+        if goal is None and not drop_capture and target is not None and 40.0 <= nearest <= 170.0 and radius > 75.0:
             # Do not become a stationary firing platform once safely inside the
             # zone. A short orbit is harder to lead than a parked mech, and the
             # center bias keeps that orbit inside the shrinking ring.
@@ -558,6 +568,9 @@ class Bot:
         action["move"] = move
         pulse_boost = opportunistic_strafe and float(me.get("energy", 0.0)) > 40.0 and (t % 1.5) < 0.3
         action["boost"] = roof_override[1] if roof_override else bool((urgent and float(me.get("energy", 0.0)) > 15.0) or pulse_boost)
+        if drop_capture and not urgent:
+            action["move"] = [0.0, 0.0]
+            action["boost"] = False
         if roof_override and roof_override[2]:
             action["jump"] = True
 

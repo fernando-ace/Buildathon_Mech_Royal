@@ -268,6 +268,30 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot.act(obs)["move"], [0.0, 0.0])
 
+    def test_collects_a_safe_landed_drop_when_damaged(self):
+        bot = self.make_bot()
+        me = {
+            "id": 0, "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"walk_speed": 11.7}, "hp": 700.0, "max_hp": 1400.0,
+            "energy": 80.0, "grounded": False, "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        drop = {"pos": [40.0, 0.0, 0.0], "lands_in": 0.0, "holder": None, "radius": 8.0}
+        obs = {
+            "tick": 1, "t": 110.0, "alive": 12.0, "self": me, "mechs": [],
+            "events": [], "sounds": [], "beams": [], "projectiles": [],
+            "pickups": [], "cubes": [], "drops": [drop], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 200.0, "next_center": [0.0, 0.0], "next_radius": 200.0,
+                     "shrink_start": 200.0, "shrink_end": 230.0},
+        }
+
+        self.assertEqual(bot.act(obs)["move"], [1.0, 0.0])
+
+        me["pos"] = [35.0, 0.0, 0.0]
+        obs["tick"] = 2
+        action = bot.act(obs)
+        self.assertEqual(action["move"], [0.0, 0.0])
+        self.assertFalse(action["boost"])
+
 
 class NavigationTests(unittest.TestCase):
     def make_navigator(self):
