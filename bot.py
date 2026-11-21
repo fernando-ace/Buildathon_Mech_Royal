@@ -106,6 +106,25 @@ class Bot:
         self.cover_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
+        self.evade_threat_id: int | None = None
+        self.evade_side = 1.0
+        self.evade_until = -1.0
+        self.evade_cycle = 0
+
+    def _evasion_side(self, t: float, threat_id: int) -> float:
+        """Alternate strafe direction on a threat-specific, irregular cadence."""
+        if threat_id != self.evade_threat_id:
+            self.evade_threat_id = threat_id
+            self.evade_cycle = 0
+            self.evade_side = 1.0 if (self.slot + threat_id) % 2 == 0 else -1.0
+            self.evade_until = t
+        if t >= self.evade_until:
+            if self.evade_cycle:
+                self.evade_side *= -1.0
+            self.evade_cycle += 1
+            seed = (self.slot * 0x9E3779B1) ^ (threat_id * 0x85EBCA77) ^ (self.evade_cycle * 0xC2B2AE3D)
+            self.evade_until = t + 0.42 + ((seed & 0xFFFF) % 48) / 100.0
+        return self.evade_side
 
     def _future_zone(self, obs: mf.Observation) -> tuple[list[float], float]:
         zone = obs["zone"]
@@ -420,10 +439,7 @@ class Bot:
             target_pos = incoming_threat["pos"]
             dx, dy = target_pos[0] - x, target_pos[1] - y
             length = max(1.0, math.hypot(dx, dy))
-            side = 1.0 if self.slot % 2 == 0 else -1.0
-            period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
-            if int(t / period) % 2:
-                side = -side
+            side = self._evasion_side(t, int(incoming_threat["id"]))
             evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
             if goal:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]

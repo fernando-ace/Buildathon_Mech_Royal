@@ -278,16 +278,16 @@ class PolicyTests(unittest.TestCase):
                      "shrink_start": 20.0, "shrink_end": 30.0},
         }
 
-        first = bot.act(obs)["move"][1]
-        obs["tick"] = 2
-        obs["t"] = 2.0
-        second = bot.act(obs)["move"][1]
+        directions = []
+        for tick in range(1, 61):
+            obs["tick"] = tick
+            obs["t"] = tick * 0.1
+            directions.append(bot.act(obs)["move"][1])
 
-        self.assertLess(first * second, 0.0)
-        obs["tick"] = 3
-        obs["t"] = 4.0
-        third = bot.act(obs)["move"][1]
-        self.assertLess(second * third, 0.0)
+        flips = sum(a * b < 0.0 for a, b in zip(directions, directions[1:]))
+        self.assertGreaterEqual(flips, 3)
+        self.assertLess(min(directions), 0.0)
+        self.assertGreater(max(directions), 0.0)
 
     def test_dodges_a_projectile_on_an_imminent_collision_course(self):
         bot = self.make_bot()
@@ -370,6 +370,22 @@ class NavigationTests(unittest.TestCase):
         waypoint = nav.next_waypoint(list(nav._xy(start)), [20.0, 15.0])
         self.assertIsNotNone(waypoint)
         self.assertNotEqual(waypoint, [20.0, 15.0])
+
+    def test_nearby_cover_search_returns_best_local_candidate(self):
+        nav = self.make_navigator()
+        position, center, radius, max_distance = [10.0, 18.0], [20.0, 20.0], 100.0, 20.0
+        safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+        candidates = []
+        for node, cover in enumerate(nav._cover):
+            if cover < 2 or nav._blocked[node]:
+                continue
+            x, y = nav._xy(node)
+            travel = math.hypot(x - position[0], y - position[1])
+            if travel <= max_distance and math.hypot(x - center[0], y - center[1]) <= safe_radius:
+                candidates.append((travel - min(12.0, float(cover) * 3.0), node))
+        expected = list(nav._xy(min(candidates)[1])) if candidates else None
+
+        self.assertEqual(nav.nearby_cover_goal(position, center, radius, max_distance), expected)
 
     def test_roof_candidates_respect_energy_reserve(self):
         nx = ny = 40

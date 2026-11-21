@@ -351,19 +351,25 @@ class MapNavigator:
     def nearby_cover_goal(self, position: list[float], center: list[float], radius: float, max_distance: float = 72.0) -> list[float] | None:
         safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
         best: tuple[float, int] | None = None
-        for node, cover in enumerate(self._cover):
-            if cover < 2 or self._blocked[node]:
-                continue
-            x, y = self._xy(node)
-            travel = math.hypot(x - position[0], y - position[1])
-            if travel > max_distance:
-                continue
-            if math.hypot(x - center[0], y - center[1]) > safe_radius:
-                continue
-            # Prefer nearby positions protected by more than one obstruction.
-            score = travel - min(12.0, float(cover) * 3.0)
-            if best is None or score < best[0]:
-                best = (score, node)
+        min_ix = max(0, int(math.floor((position[0] - max_distance - self.origin_x) / self.grid_step)))
+        max_ix = min(self.width - 1, int(math.ceil((position[0] + max_distance - self.origin_x) / self.grid_step)))
+        min_iy = max(0, int(math.floor((position[1] - max_distance - self.origin_y) / self.grid_step)))
+        max_iy = min(self.height_count - 1, int(math.ceil((position[1] + max_distance - self.origin_y) / self.grid_step)))
+        for iy in range(min_iy, max_iy + 1):
+            row = iy * self.width
+            for ix in range(min_ix, max_ix + 1):
+                node = row + ix
+                cover = self._cover[node]
+                if cover < 2 or self._blocked[node]:
+                    continue
+                x, y = self._xy(node)
+                travel = math.hypot(x - position[0], y - position[1])
+                if travel > max_distance or math.hypot(x - center[0], y - center[1]) > safe_radius:
+                    continue
+                # Prefer nearby positions protected by more than one obstruction.
+                score = travel - min(12.0, float(cover) * 3.0)
+                if best is None or score < best[0]:
+                    best = (score, node)
         return list(self._xy(best[1])) if best else None
 
 
