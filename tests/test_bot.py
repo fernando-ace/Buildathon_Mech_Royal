@@ -200,6 +200,30 @@ class PolicyTests(unittest.TestCase):
         self.assertAlmostEqual(abs(action["move"][1]), 1.0, delta=0.01)
         self.assertTrue(action["boost"])
 
+    def test_ignores_a_charging_mech_facing_away(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1000.0, "max_hp": 1400.0, "energy": 80.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        charger = {
+            "id": 2, "kind": "mech", "pos": [60.0, 0.0, 0.0],
+            "vel": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "charging": True,
+        }
+        obs = {
+            "tick": 1, "t": 5.0, "alive": 12.0, "self": me, "mechs": [charger],
+            "events": [], "sounds": [], "beams": [], "projectiles": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertFalse(action["boost"])
+
     def test_ranged_evasion_changes_sides_after_a_short_interval(self):
         bot = self.make_bot()
         me = {

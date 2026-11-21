@@ -393,7 +393,7 @@ class Bot:
                 toward_us = math.atan2(y - actor["pos"][1], x - actor["pos"][0])
                 aim_error = abs(_angle_delta(toward_us, float(actor_aim[0])))
             charging = bool(actor.get("charging"))
-            if aim_error < 0.35 or charging:
+            if aim_error < 0.35:
                 score = (0.0 if charging else 1.0) + aim_error + threat_distance * 0.001
                 if score < threat_score:
                     incoming_threat = actor
