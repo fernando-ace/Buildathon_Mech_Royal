@@ -98,8 +98,6 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
-        self.threat_cover_goal: list[float] | None = None
-        self.threat_cover_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
 
@@ -128,29 +126,6 @@ class Bot:
             return center
         return [center[0] + dx * safe_radius / distance, center[1] + dy * safe_radius / distance]
 
-    def _threat_cover_goal(
-        self,
-        me: dict[str, Any],
-        threats: list[dict[str, Any]],
-        center: list[float],
-        radius: float,
-        t: float,
-    ) -> list[float] | None:
-        if t < self.threat_cover_recheck:
-            return self.threat_cover_goal
-        self.threat_cover_recheck = t + 0.5
-        self.threat_cover_goal = None
-        if self.navigator:
-            nearby = [
-                actor for actor in threats
-                if actor.get("kind") == "mech" and _dist(me["pos"], actor["pos"]) <= 180.0
-            ]
-            if nearby:
-                self.threat_cover_goal = self.navigator.nearby_cover_goal(
-                    me["pos"], center, radius, max_distance=96.0, threats=nearby,
-                )
-        return self.threat_cover_goal
-
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
         if not offer:
@@ -158,11 +133,11 @@ class Bot:
         held = {w["kind"] for w in obs["self"].get("weapons", []) if w}
         hp_ratio = float(obs["self"]["hp"]) / max(1.0, float(obs["self"]["max_hp"]))
         score = {
-            "armor": 12.0,
-            "plating": 10.5 + (2.0 if hp_ratio < 0.75 else 0.0),
-            "nanites": 9.5 + (1.0 if hp_ratio < 0.8 else 0.0),
-            "servos": 9.0,
-            "jets": 8.5,
+            "nanites": 14.0 + (4.0 if hp_ratio < 0.9 else 0.0),
+            "plating": 15.0,
+            "armor": 13.0,
+            "servos": 10.5,
+            "jets": 9.5,
             "reactor": 8.0,
             "capacitor": 7.5,
             "sensors": 7.0,
@@ -376,7 +351,6 @@ class Bot:
         target = self._target(obs)
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
         projectile_threat = self._projectile_threat(obs)
-        hide_from_threat = False
         incoming_attack = False
         incoming_threat: dict[str, Any] | None = None
         incoming_aim_error = math.inf
@@ -410,41 +384,31 @@ class Bot:
                 dodge[1] = 0.8 * dodge[1] + 0.2 * goal[1]
             goal = dodge
             incoming_attack = impact_time < 0.35
+        # A nearby mech is a threat first. Retreat while keeping a path toward safety.
+        elif target and target.get("kind") == "mech" and nearest < 40.0:
+            dx, dy = x - target["pos"][0], y - target["pos"][1]
+            length = max(1.0, math.hypot(dx, dy))
+            away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
+            if goal:
+                away[0] = 0.8 * away[0] + 0.2 * goal[0]
+                away[1] = 0.8 * away[1] + 0.2 * goal[1]
+            goal = away
         elif incoming_threat:
             incoming_attack = incoming_aim_error < 0.16 or incoming_charging
-            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
-            if cover:
-                goal = cover
-                hide_from_threat = True
-            else:
-                # Move across a visible attack line before the shot lands. Keep half of
-                # any existing zone objective so evasion does not undo routing.
-                target_pos = incoming_threat["pos"]
-                dx, dy = target_pos[0] - x, target_pos[1] - y
-                length = max(1.0, math.hypot(dx, dy))
-                side = 1.0 if self.slot % 2 == 0 else -1.0
-                period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
-                if int(t / period) % 2:
-                    side = -side
-                evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
-                if goal:
-                    evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
-                    evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
-                goal = evade
-        # Prefer cover that breaks the shooter's line of sight when a mech closes.
-        elif target and target.get("kind") == "mech" and nearest < 100.0:
-            cover = self._threat_cover_goal(me, obs.get("mechs", []), center, radius, t)
-            if cover:
-                goal = cover
-                hide_from_threat = True
-            elif nearest < 40.0:
-                dx, dy = x - target["pos"][0], y - target["pos"][1]
-                length = max(1.0, math.hypot(dx, dy))
-                away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
-                if goal:
-                    away[0] = 0.8 * away[0] + 0.2 * goal[0]
-                    away[1] = 0.8 * away[1] + 0.2 * goal[1]
-                goal = away
+            # Move across a visible attack line before the shot lands. Keep half of
+            # any existing zone or cover objective so evasion does not undo routing.
+            target_pos = incoming_threat["pos"]
+            dx, dy = target_pos[0] - x, target_pos[1] - y
+            length = max(1.0, math.hypot(dx, dy))
+            side = 1.0 if self.slot % 2 == 0 else -1.0
+            period = 1.2 + 0.15 * ((self.slot + int(incoming_threat["id"])) % 4)
+            if int(t / period) % 2:
+                side = -side
+            evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
+            if goal:
+                evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
+                evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
+            goal = evade
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
@@ -611,8 +575,6 @@ class Bot:
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
             action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
-            if hide_from_threat:
-                action["fire"] = [False, False]
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:

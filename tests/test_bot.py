@@ -72,6 +72,18 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(fire, [False, False])
         self.assertTrue(action["reload"])
 
+    def test_upgrade_choice_favors_regen_when_hurt_and_max_hp_when_healthy(self):
+        bot = self.make_bot()
+        bot.config["upgrades"] = [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]
+        obs = {
+            "self": {"hp": 600.0, "max_hp": 1400.0, "weapons": []},
+            "offer": {"choices": [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]},
+        }
+
+        self.assertEqual(bot._choose_upgrade(obs), 1)
+        obs["self"]["hp"] = 1400.0
+        self.assertEqual(bot._choose_upgrade(obs), 2)
+
     def test_engages_a_close_drone_without_retreating_from_it(self):
         bot = self.make_bot()
         gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {"range": 230.0, "speed": 252.0}}
@@ -285,19 +297,6 @@ class NavigationTests(unittest.TestCase):
         waypoint = nav.next_waypoint(list(nav._xy(start)), [20.0, 15.0])
         self.assertIsNotNone(waypoint)
         self.assertNotEqual(waypoint, [20.0, 15.0])
-
-    def test_cover_goal_breaks_ground_sight_from_a_nearby_threat(self):
-        nav = self.make_navigator()
-        threat = {"pos": [0.0, 10.0, 0.0]}
-        start = [10.0, 10.0, 0.0]
-
-        goal = nav.nearby_cover_goal(
-            start, [20.0, 20.0], 40.0, max_distance=30.0,
-            threats=[threat],
-        )
-
-        self.assertIsNotNone(goal)
-        self.assertTrue(nav._blocks_ground_sight(threat["pos"], [goal[0], goal[1], 0.0]))
 
     def test_roof_candidates_respect_energy_reserve(self):
         nx = ny = 40
