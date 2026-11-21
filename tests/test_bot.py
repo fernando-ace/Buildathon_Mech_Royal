@@ -119,7 +119,7 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["id"], 2)
 
-    def test_routes_to_an_uncontested_safe_drop_before_it_lands(self):
+    def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()
         me = {
             "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"walk_speed": 11.7},
@@ -135,7 +135,7 @@ class PolicyTests(unittest.TestCase):
                      "shrink_start": 40.0, "shrink_end": 50.0},
         }
 
-        self.assertGreater(bot.act(obs)["move"][0], 0.0)
+        self.assertEqual(bot.act(obs)["move"], [0.0, 0.0])
 
 
 class NavigationTests(unittest.TestCase):

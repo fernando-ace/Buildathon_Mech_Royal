@@ -352,15 +352,13 @@ class Bot:
                 if _dist(me["pos"], cube["pos"]) > 3.0:
                     goal = cube["pos"][:2]
 
-        # A safe drop is a full heal and three cubes; start moving early enough to
-        # arrive near landing, but skip it while recently damaged or under pressure.
-        if nearest > 120.0 and t - self.last_hit_time > 2.5:
-            walk_speed = float(me.get("stats", {}).get("walk_speed", self.config.get("mech", {}).get("walk_speed", 11.7)))
+        # Drops heal and award three cubes, but waiting for a quiet one avoids
+        # interrupting zone travel and inviting a fight while it is contested.
+        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
             drops = [
                 d for d in obs.get("drops", [])
-                if d.get("holder") is None
-                and _dist(me["pos"], d["pos"]) <= 240.0
-                and float(d.get("lands_in", 99.0)) <= _dist(me["pos"], d["pos"]) / max(1.0, walk_speed) + 5.0
+                if float(d.get("lands_in", 99.0)) <= 0.0
+                and d.get("holder") is None
                 and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)
             ]
             if drops:
