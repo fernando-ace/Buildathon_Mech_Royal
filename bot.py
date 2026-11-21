@@ -594,24 +594,6 @@ class Bot:
                 goal = None
                 roof_override = ([0.0, 0.0], False, False)
 
-        opportunistic_strafe = False
-        if goal is None and not drop_capture and target is not None and 40.0 <= nearest <= 170.0 and radius > 75.0:
-            # Do not become a stationary firing platform once safely inside the
-            # zone. A short orbit is harder to lead than a parked mech, and the
-            # center bias keeps that orbit inside the shrinking ring.
-            dx, dy = x - float(target["pos"][0]), y - float(target["pos"][1])
-            distance = max(1.0, math.hypot(dx, dy))
-            period = 1.1 + 0.17 * ((self.slot + int(target["id"])) % 4)
-            side = 1.0 if int(t / period) % 2 == 0 else -1.0
-            direction = [-side * dy / distance, side * dx / distance]
-            radial = math.hypot(x - center[0], y - center[1])
-            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
-            if radial > safe_radius - 35.0:
-                inward = _normalize(center[0] - x, center[1] - y)
-                direction = _normalize(direction[0] + 1.5 * inward[0], direction[1] + 1.5 * inward[1])
-            goal = [x + 32.0 * direction[0], y + 32.0 * direction[1]]
-            opportunistic_strafe = True
-
         move = [0.0, 0.0]
         if goal:
             waypoint = self.navigator.next_waypoint(me["pos"], goal) if self.navigator else None
@@ -627,8 +609,7 @@ class Bot:
             move = roof_override[0]
         urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6 or incoming_attack
         action["move"] = move
-        pulse_boost = opportunistic_strafe and float(me.get("energy", 0.0)) > 40.0 and (t % 1.5) < 0.3
-        action["boost"] = roof_override[1] if roof_override else bool((urgent and float(me.get("energy", 0.0)) > 15.0) or pulse_boost)
+        action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if drop_capture and not urgent:
             action["move"] = [0.0, 0.0]
             action["boost"] = False
