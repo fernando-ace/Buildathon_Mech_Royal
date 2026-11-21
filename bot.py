@@ -88,7 +88,6 @@ class Bot:
         self.last_threat_time = -100.0
         self.last_hit_time = -100.0
         self.last_attacker: int | None = None
-        self.last_jump_time = -100.0
         mech_config = self.config.get("mech", {})
         self.navigator: MapNavigator | None = load_navigator(
             hello.get("map", {}).get("dir", ""),
@@ -126,19 +125,6 @@ class Bot:
             return center
         return [center[0] + dx * safe_radius / distance, center[1] + dy * safe_radius / distance]
 
-    def _evasion_goal(self, position: list[float], bearing: float, center: list[float], radius: float, goal: list[float] | None) -> list[float]:
-        """Break line of fire while keeping the escape point inside the projected zone."""
-        distance = 64.0
-        point = [position[0] - distance * math.cos(bearing), position[1] - distance * math.sin(bearing)]
-        if goal is not None:
-            point = [0.75 * point[i] + 0.25 * goal[i] for i in range(2)]
-        safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
-        dx, dy = point[0] - center[0], point[1] - center[1]
-        radial_distance = math.hypot(dx, dy)
-        if radial_distance > safe_radius and radial_distance > 1e-6:
-            point = [center[0] + dx * safe_radius / radial_distance, center[1] + dy * safe_radius / radial_distance]
-        return point
-
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
         if not offer:
@@ -148,7 +134,7 @@ class Bot:
         score = {
             "armor": 12.0,
             "plating": 10.5 + (2.0 if hp_ratio < 0.75 else 0.0),
-            "nanites": 13.0 + (1.0 if hp_ratio < 0.8 else 0.0),
+            "nanites": 9.5 + (1.0 if hp_ratio < 0.8 else 0.0),
             "servos": 9.0,
             "jets": 8.5,
             "reactor": 8.0,
@@ -181,28 +167,17 @@ class Bot:
 
     def _target(self, obs: mf.Observation) -> dict[str, Any] | None:
         me = obs["self"]
-        actors = obs.get("mechs", [])
-        candidates = [m for m in actors if m.get("kind") == "mech"]
+        candidates = [m for m in obs.get("mechs", []) if m.get("kind") == "mech"]
+        if not candidates:
+            return None
         recent = self.last_attacker if obs["t"] - self.last_threat_time < 3.0 else None
 
-        def distance(target: dict[str, Any]) -> float:
-            return _dist(me["pos"], target["pos"])
-
-        npc_range = float(self.config.get("npc", {}).get("aggro_range", 45.0))
-        npcs = [m for m in actors if m.get("kind") == "npc" and (distance(m) <= npc_range or int(m["id"]) == recent)]
-        mech = min(candidates, key=distance) if candidates else None
-        npc = min(npcs, key=distance) if npcs else None
-        if npc and (mech is None or distance(mech) >= 40.0):
-            return npc
-        if mech is None:
-            return None
-
         def key(target: dict[str, Any]) -> float:
-            target_distance = distance(target)
+            distance = _dist(me["pos"], target["pos"])
             hp = float(target.get("hp", target.get("max_hp", 1400)))
             threat_bonus = 45.0 if int(target["id"]) == recent else 0.0
             charge_bonus = 25.0 if target.get("charging") else 0.0
-            return target_distance + 0.025 * hp - threat_bonus - charge_bonus
+            return distance + 0.025 * hp - threat_bonus - charge_bonus
 
         return min(candidates, key=key)
 
@@ -278,8 +253,6 @@ class Bot:
                 if bearing is not None:
                     self.last_threat_bearing = float(bearing)
                     self.last_threat_time = t
-                else:
-                    self.last_threat_bearing = None
                 attacker = event.get("by")
                 if attacker is not None:
                     self.last_attacker = int(attacker)
@@ -310,8 +283,7 @@ class Bot:
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
 
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        # A nearby drone is better eliminated before it chips away at HP and drops cubes.
-        if target and target.get("kind") == "mech" and nearest < 40.0:
+        if target and nearest < 40.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
             length = max(1.0, math.hypot(dx, dy))
             away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
@@ -319,12 +291,8 @@ class Bot:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
             goal = away
-        defending_against_npc = target is not None and target.get("kind") == "npc" and target.get("id") == self.last_attacker
-        if t - self.last_hit_time < 1.5 and self.last_threat_bearing is not None and not defending_against_npc:
-            bearing = self.last_threat_bearing
-            if target is not None and nearest < 40.0:
-                bearing = math.atan2(target["pos"][1] - y, target["pos"][0] - x)
-            goal = self._evasion_goal([x, y], bearing, center, radius, goal)
+        elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
+            goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
         if self.navigator and goal is None and nearest > 60.0:
             if self.navigator.cover_score(x, y) < 2:
@@ -345,10 +313,13 @@ class Bot:
         held = {w["kind"] for w in weapons if w}
         if nearest > 60.0 and (len(weapons) < 2 or not weapons[1]):
             reach = float(self.config["loot"].get("pickup_radius", 4.0))
-            choices = [p for p in obs.get("pickups", []) if p.get("kind") not in held and _dist(me["pos"], p["pos"]) <= reach]
+            choices = [p for p in obs.get("pickups", []) if p.get("kind") not in held and _dist(me["pos"], p["pos"]) <= 45.0]
             if choices:
                 pickup = min(choices, key=lambda p: _dist(me["pos"], p["pos"]))
-                action["take"] = pickup["id"]
+                if _dist(me["pos"], pickup["pos"]) <= reach:
+                    action["take"] = pickup["id"]
+                else:
+                    goal = pickup["pos"][:2]
 
         # Cubes are valuable while below the ten-cube damage/health cap, but not worth
         # crossing an unsafe circle or walking into a nearby fight to collect.
@@ -360,17 +331,10 @@ class Bot:
                 if _dist(me["pos"], cube["pos"]) > 3.0:
                     goal = cube["pos"][:2]
 
-        # An uncontested drop is a full heal and three cubes. Start toward it early
-        # enough to arrive as it lands, but only while no mech is close.
-        if nearest > 120.0 and t - self.last_hit_time > 2.5:
-            walk_speed = float(me.get("stats", {}).get("walk_speed", self.config.get("mech", {}).get("walk_speed", 11.7)))
-            drops = [
-                d for d in obs.get("drops", [])
-                if d.get("holder") is None
-                and _dist(me["pos"], d["pos"]) <= 240.0
-                and float(d.get("lands_in", 99.0)) <= _dist(me["pos"], d["pos"]) / max(1.0, walk_speed) + 5.0
-                and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)
-            ]
+        # Supply drops heal and award three cubes. Only take a quiet, uncontested drop
+        # late, when few players remain and it is already inside the future circle.
+        if nearest > 120.0 and float(obs.get("alive", 16.0)) <= 4.0:
+            drops = [d for d in obs.get("drops", []) if float(d.get("lands_in", 99.0)) <= 0.0 and d.get("holder") is None and math.hypot(d["pos"][0] - center[0], d["pos"][1] - center[1]) <= max(0.0, radius - 12.0)]
             if drops:
                 drop = min(drops, key=lambda d: _dist(me["pos"], d["pos"]))
                 if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:
@@ -449,16 +413,11 @@ class Bot:
                 move = _normalize(waypoint[0] - x, waypoint[1] - y)
         if roof_override:
             move = roof_override[0]
-        urgent = not bool(me.get("in_zone", True)) or (target is not None and target.get("kind") == "mech" and nearest < 40.0) or (self.last_hit_time >= t - 1.5 and not defending_against_npc)
+        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6
         action["move"] = move
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if roof_override and roof_override[2]:
             action["jump"] = True
-        elif me.get("grounded", False) and (int(obs["tick"]) % 40 == 0 or (t - self.last_hit_time <= 1.0 and t - self.last_jump_time >= 0.8)):
-            # Keep the starter kit's four-second hop cadence and add one quick dodge
-            # after taking fire; a grounded mech is much easier to lead.
-            action["jump"] = True
-            self.last_jump_time = t
 
         if target is None and t - self.last_hit_time > 0.5:
             gun = next((w for w in weapons if w and w.get("kind") == "gun"), None)
@@ -469,10 +428,7 @@ class Bot:
         if target:
             selected = self._select_weapon(obs, target)
             selected_kind = selected[1].get("kind") if selected else "gun"
-            if target.get("kind") == "npc":
-                target_height = float(self.config.get("npc", {}).get("height", 3.5)) * 0.5
-            else:
-                target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
+            target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
             if selected_kind == "mortar" and selected:
                 solution = _mortar_aim(me, target, float(selected[1].get("stats", {}).get("speed", 72.0)), float(self.config["weapons"]["mortar"].get("gravity", 22.0)), target_height)
                 if solution:
@@ -492,11 +448,7 @@ class Bot:
             mech_config = self.config.get("mech", {})
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            fire = self._weapon_fire(obs, target, aim, action, selected)
-            # Long-range shots advertise your position and delay health regeneration.
-            if nearest > 70.0:
-                fire = [False, False]
-            action["fire"] = fire
+            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:
