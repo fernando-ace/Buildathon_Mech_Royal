@@ -61,6 +61,14 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(center, [50.0, 0.0])
         self.assertEqual(radius, 50.0)
 
+    def test_evasion_goal_stays_inside_the_safe_zone_margin(self):
+        bot = self.make_bot()
+
+        point = bot._clamp_evasion_to_zone([120.0, 0.0], [0.0, 0.0], 100.0)
+
+        self.assertAlmostEqual(point[0], 92.0)
+        self.assertAlmostEqual(point[1], 0.0)
+
     def test_empty_gun_reloads_even_in_close_combat(self):
         bot = self.make_bot()
         gun = {"kind": "gun", "ammo": 0.0, "reload": 0.0, "stats": {"range": 230.0}}

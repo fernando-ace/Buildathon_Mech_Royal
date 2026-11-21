@@ -177,6 +177,18 @@ class Bot:
             return center
         return [center[0] + dx * safe_radius / distance, center[1] + dy * safe_radius / distance]
 
+    def _clamp_evasion_to_zone(self, point: list[float], center: list[float], radius: float) -> list[float]:
+        if radius < 40.0:
+            return point
+        margin = min(22.0, max(8.0, radius * 0.08))
+        safe_radius = max(0.0, radius - margin)
+        dx, dy = point[0] - center[0], point[1] - center[1]
+        distance = math.hypot(dx, dy)
+        if distance <= safe_radius or distance < 1e-6:
+            return point
+        scale = safe_radius / distance
+        return [center[0] + dx * scale, center[1] + dy * scale]
+
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
         if not offer:
@@ -454,7 +466,7 @@ class Bot:
             if goal:
                 dodge[0] = 0.8 * dodge[0] + 0.2 * goal[0]
                 dodge[1] = 0.8 * dodge[1] + 0.2 * goal[1]
-            goal = dodge
+            goal = self._clamp_evasion_to_zone(dodge, center, radius)
             incoming_attack = impact_time < 0.55
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
         elif target and target.get("kind") == "mech" and nearest < 60.0:
@@ -464,7 +476,7 @@ class Bot:
             if goal:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
-            goal = away
+            goal = self._clamp_evasion_to_zone(away, center, radius)
         elif incoming_threat:
             incoming_attack = incoming_aim_error < 0.16 or incoming_charging
             # Move across a visible attack line before the shot lands. Keep half of
@@ -474,7 +486,7 @@ class Bot:
             if goal:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
                 evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
-            goal = evade
+            goal = self._clamp_evasion_to_zone(evade, center, radius)
         elif warning_sound:
             # An audible charge or mortar launch can reveal an attacker outside
             # vision. Cross that firing line briefly while preserving zone travel.
@@ -484,7 +496,7 @@ class Bot:
             if goal:
                 evade[0] = 0.65 * evade[0] + 0.35 * goal[0]
                 evade[1] = 0.65 * evade[1] + 0.35 * goal[1]
-            goal = evade
+            goal = self._clamp_evasion_to_zone(evade, center, radius)
             incoming_attack = float(warning_sound.get("age", 99.0)) < 0.35
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
