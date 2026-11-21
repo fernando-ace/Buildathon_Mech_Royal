@@ -147,10 +147,10 @@ class Bot:
         hp_ratio = float(obs["self"]["hp"]) / max(1.0, float(obs["self"]["max_hp"]))
         score = {
             "armor": 12.0,
-            "plating": 10.5 + (2.0 if hp_ratio < 0.75 else 0.0),
-            "nanites": 9.5 + (1.0 if hp_ratio < 0.8 else 0.0),
-            "servos": 9.0,
-            "jets": 8.5,
+            "plating": 11.2 + (2.0 if hp_ratio < 0.75 else 0.0),
+            "nanites": 10.2 + (3.5 if hp_ratio < 0.9 else 0.0),
+            "servos": 9.5,
+            "jets": 9.0,
             "reactor": 8.0,
             "capacitor": 7.5,
             "sensors": 7.0,

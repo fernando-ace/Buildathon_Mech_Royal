@@ -102,6 +102,19 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["kind"], "mech")
 
+    def test_prefers_nanite_regen_when_health_is_low(self):
+        bot = self.make_bot()
+        bot.config["upgrades"] = [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]
+        obs = {
+            "self": {"hp": 600.0, "max_hp": 1400.0, "weapons": []},
+            "offer": {"choices": [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]},
+        }
+
+        self.assertEqual(bot._choose_upgrade(obs), 1)
+
+        obs["self"]["hp"] = 1400.0
+        self.assertEqual(bot._choose_upgrade(obs), 0)
+
     def test_target_selection_prefers_a_damaged_mech_for_a_finishing_shot(self):
         bot = self.make_bot()
         healthy = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "hp": 1400.0}
