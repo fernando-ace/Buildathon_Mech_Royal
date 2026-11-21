@@ -181,17 +181,28 @@ class Bot:
 
     def _target(self, obs: mf.Observation) -> dict[str, Any] | None:
         me = obs["self"]
-        candidates = [m for m in obs.get("mechs", []) if m.get("kind") == "mech"]
-        if not candidates:
-            return None
+        actors = obs.get("mechs", [])
+        candidates = [m for m in actors if m.get("kind") == "mech"]
         recent = self.last_attacker if obs["t"] - self.last_threat_time < 3.0 else None
 
+        def distance(target: dict[str, Any]) -> float:
+            return _dist(me["pos"], target["pos"])
+
+        npc_range = float(self.config.get("npc", {}).get("aggro_range", 45.0))
+        npcs = [m for m in actors if m.get("kind") == "npc" and (distance(m) <= npc_range or int(m["id"]) == recent)]
+        mech = min(candidates, key=distance) if candidates else None
+        npc = min(npcs, key=distance) if npcs else None
+        if npc and (mech is None or distance(mech) >= 40.0):
+            return npc
+        if mech is None:
+            return None
+
         def key(target: dict[str, Any]) -> float:
-            distance = _dist(me["pos"], target["pos"])
+            target_distance = distance(target)
             hp = float(target.get("hp", target.get("max_hp", 1400)))
             threat_bonus = 45.0 if int(target["id"]) == recent else 0.0
             charge_bonus = 25.0 if target.get("charging") else 0.0
-            return distance + 0.025 * hp - threat_bonus - charge_bonus
+            return target_distance + 0.025 * hp - threat_bonus - charge_bonus
 
         return min(candidates, key=key)
 
@@ -299,7 +310,8 @@ class Bot:
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
 
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        if target and nearest < 40.0:
+        # A nearby drone is better eliminated before it chips away at HP and drops cubes.
+        if target and target.get("kind") == "mech" and nearest < 40.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
             length = max(1.0, math.hypot(dx, dy))
             away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
@@ -307,7 +319,8 @@ class Bot:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
             goal = away
-        if t - self.last_hit_time < 1.5 and self.last_threat_bearing is not None:
+        defending_against_npc = target is not None and target.get("kind") == "npc" and target.get("id") == self.last_attacker
+        if t - self.last_hit_time < 1.5 and self.last_threat_bearing is not None and not defending_against_npc:
             bearing = self.last_threat_bearing
             if target is not None and nearest < 40.0:
                 bearing = math.atan2(target["pos"][1] - y, target["pos"][0] - x)
@@ -436,7 +449,7 @@ class Bot:
                 move = _normalize(waypoint[0] - x, waypoint[1] - y)
         if roof_override:
             move = roof_override[0]
-        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 1.5
+        urgent = not bool(me.get("in_zone", True)) or (target is not None and target.get("kind") == "mech" and nearest < 40.0) or (self.last_hit_time >= t - 1.5 and not defending_against_npc)
         action["move"] = move
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if roof_override and roof_override[2]:
@@ -456,7 +469,10 @@ class Bot:
         if target:
             selected = self._select_weapon(obs, target)
             selected_kind = selected[1].get("kind") if selected else "gun"
-            target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
+            if target.get("kind") == "npc":
+                target_height = float(self.config.get("npc", {}).get("height", 3.5)) * 0.5
+            else:
+                target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
             if selected_kind == "mortar" and selected:
                 solution = _mortar_aim(me, target, float(selected[1].get("stats", {}).get("speed", 72.0)), float(self.config["weapons"]["mortar"].get("gravity", 22.0)), target_height)
                 if solution:

@@ -40,6 +40,7 @@ class PolicyTests(unittest.TestCase):
             "config": {
                 "mech": {},
                 "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
+                "npc": {"aggro_range": 45.0, "height": 3.5},
                 "loot": {"pickup_radius": 4.0},
                 "upgrades": [],
             },
@@ -177,6 +178,34 @@ class PolicyTests(unittest.TestCase):
 
         self.assertIsNone(bot.last_threat_bearing)
         self.assertEqual(action["move"], [0.0, 0.0])
+
+    def test_engages_close_drone_instead_of_retreating_from_it(self):
+        bot = self.make_bot()
+        gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {"range": 230.0, "speed": 252.0}}
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": True, "in_zone": True, "cubes": 0, "weapons": [gun, None],
+        }
+        drone = {"id": 1001, "kind": "npc", "pos": [30.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "hp": 350.0}
+        obs = {
+            "t": 10.0, "tick": 100, "alive": 16.0, "self": me, "mechs": [drone], "events": [], "sounds": [], "beams": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0, "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertEqual(action["move"], [0.0, 0.0])
+        self.assertFalse(action["boost"])
+        self.assertTrue(action["fire"][0])
+
+    def test_close_mech_stays_a_higher_priority_than_a_drone(self):
+        bot = self.make_bot()
+        mech = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0]}
+        drone = {"id": 1001, "kind": "npc", "pos": [20.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0]}
+        obs = {"t": 10.0, "self": {"pos": [0.0, 0.0, 0.0]}, "mechs": [mech, drone]}
+
+        self.assertEqual(bot._target(obs)["kind"], "mech")
 
 
 class NavigationTests(unittest.TestCase):
