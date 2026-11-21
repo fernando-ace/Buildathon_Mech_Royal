@@ -129,8 +129,8 @@ class PolicyTests(unittest.TestCase):
         action = bot.act(obs)
 
         self.assertTrue(action["boost"])
-        self.assertLess(abs(action["move"][0]), 0.1)
-        self.assertGreater(abs(action["move"][1]), 0.9)
+        self.assertLess(action["move"][0], -0.3)
+        self.assertGreater(abs(action["move"][1]), 0.7)
 
     def test_moves_away_from_a_recent_nearby_weapon_sound(self):
         bot = self.make_bot()
@@ -226,8 +226,8 @@ class PolicyTests(unittest.TestCase):
         action = bot.act(obs)
         move = action["move"]
 
-        self.assertAlmostEqual(move[0], 0.0, delta=0.01)
-        self.assertAlmostEqual(abs(move[1]), 1.0, delta=0.01)
+        self.assertLess(move[0], -0.3)
+        self.assertGreater(abs(move[1]), 0.7)
         self.assertTrue(action["boost"])
 
     def test_evades_a_different_mech_that_is_aiming_at_us(self):
@@ -255,8 +255,8 @@ class PolicyTests(unittest.TestCase):
 
         action = bot.act(obs)
 
-        self.assertAlmostEqual(action["move"][0], 0.0, delta=0.01)
-        self.assertAlmostEqual(abs(action["move"][1]), 1.0, delta=0.01)
+        self.assertLess(action["move"][0], -0.3)
+        self.assertGreater(abs(action["move"][1]), 0.7)
         self.assertTrue(action["boost"])
 
     def test_ranged_evasion_changes_sides_after_a_short_interval(self):

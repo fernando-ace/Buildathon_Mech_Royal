@@ -440,10 +440,13 @@ class Bot:
             dx, dy = target_pos[0] - x, target_pos[1] - y
             length = max(1.0, math.hypot(dx, dy))
             side = self._evasion_side(t, int(incoming_threat["id"]))
-            evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
+            strafe = [-side * dy / length, side * dx / length]
+            away = [-dx / length, -dy / length]
+            mixed = _normalize(0.6 * strafe[0] + 0.4 * away[0], 0.6 * strafe[1] + 0.4 * away[1])
+            evade = [x + 48.0 * mixed[0], y + 48.0 * mixed[1]]
             if goal:
-                evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
-                evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
+                evade[0] = 0.8 * evade[0] + 0.2 * goal[0]
+                evade[1] = 0.8 * evade[1] + 0.2 * goal[1]
             goal = evade
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
