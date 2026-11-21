@@ -40,6 +40,7 @@ class PolicyTests(unittest.TestCase):
             "config": {
                 "mech": {},
                 "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
+                "loot": {"pickup_radius": 4.0},
                 "upgrades": [],
             },
         }
@@ -69,6 +70,46 @@ class PolicyTests(unittest.TestCase):
         fire = bot._weapon_fire(obs, target, [0.0, 0.0], action, (0, gun))
         self.assertEqual(fire, [False, False])
         self.assertTrue(action["reload"])
+
+    def test_recent_damage_triggers_evasion_even_with_a_visible_target(self):
+        bot = self.make_bot()
+        bot.last_hit_time = 10.0
+        bot.last_threat_time = 10.0
+        bot.last_threat_bearing = 0.0
+        gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {"range": 230.0, "speed": 252.0}}
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 800.0, "max_hp": 1400.0, "energy": 100.0, "grounded": True, "in_zone": True, "cubes": 0,
+            "weapons": [gun, None],
+        }
+        target = {"id": 1, "kind": "mech", "pos": [100.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 1400.0}
+        obs = {
+            "t": 10.1, "tick": 101, "alive": 16.0, "self": me, "mechs": [target], "events": [], "sounds": [], "beams": [],
+            "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0, "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertLess(action["move"][0], 0.0)
+        self.assertEqual(action["fire"], [False, False])
+
+    def test_evasion_goal_stays_in_projected_zone(self):
+        bot = self.make_bot()
+
+        goal = bot._evasion_goal([0.0, 0.0], 0.0, [0.0, 0.0], 60.0, None)
+
+        self.assertAlmostEqual(goal[0], -52.0)
+        self.assertAlmostEqual(goal[1], 0.0)
+
+    def test_upgrade_choice_prioritizes_health_regeneration(self):
+        bot = self.make_bot()
+        obs = {
+            "self": {"hp": 800.0, "max_hp": 1400.0, "weapons": [{"kind": "gun"}, None]},
+            "offer": {"choices": [{"id": "armor"}, {"id": "nanites"}, {"id": "plating"}]},
+        }
+
+        self.assertEqual(bot._choose_upgrade(obs), 1)
 
 
 class NavigationTests(unittest.TestCase):
@@ -100,15 +141,6 @@ class NavigationTests(unittest.TestCase):
         self.assertTrue(path)
         ys = [nav._xy(node)[1] for node in path]
         self.assertGreater(max(ys), 28.0)
-
-    def test_patrol_cover_goal_respects_travel_and_zone_bounds(self):
-        nav = self.make_navigator()
-        goal = nav.nearby_cover_goal([2.0, 20.0], [20.0, 20.0], 60.0, max_distance=30.0, min_distance=12.0)
-        self.assertIsNotNone(goal)
-        self.assertGreaterEqual(math.hypot(goal[0] - 2.0, goal[1] - 20.0), 12.0)
-        self.assertLessEqual(math.hypot(goal[0] - 2.0, goal[1] - 20.0), 30.0)
-        self.assertLessEqual(math.hypot(goal[0] - 20.0, goal[1] - 20.0), 38.0)
-        self.assertGreaterEqual(nav.cover_score(*goal), 2)
 
     def test_blocked_goal_terminates_at_nearest_walkable_node(self):
         nav = self.make_navigator()

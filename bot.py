@@ -97,8 +97,6 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
-        self.patrol_goal: list[float] | None = None
-        self.patrol_recheck = 0.0
         self.roof_state: dict[str, Any] | None = None
         self.roof_recheck = 0.0
 
@@ -127,6 +125,19 @@ class Bot:
             return center
         return [center[0] + dx * safe_radius / distance, center[1] + dy * safe_radius / distance]
 
+    def _evasion_goal(self, position: list[float], bearing: float, center: list[float], radius: float, goal: list[float] | None) -> list[float]:
+        """Break line of fire while keeping the escape point inside the projected zone."""
+        distance = 64.0
+        point = [position[0] - distance * math.cos(bearing), position[1] - distance * math.sin(bearing)]
+        if goal is not None:
+            point = [0.75 * point[i] + 0.25 * goal[i] for i in range(2)]
+        safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+        dx, dy = point[0] - center[0], point[1] - center[1]
+        radial_distance = math.hypot(dx, dy)
+        if radial_distance > safe_radius and radial_distance > 1e-6:
+            point = [center[0] + dx * safe_radius / radial_distance, center[1] + dy * safe_radius / radial_distance]
+        return point
+
     def _choose_upgrade(self, obs: mf.Observation) -> int:
         offer = obs.get("offer")
         if not offer:
@@ -136,7 +147,7 @@ class Bot:
         score = {
             "armor": 12.0,
             "plating": 10.5 + (2.0 if hp_ratio < 0.75 else 0.0),
-            "nanites": 9.5 + (1.0 if hp_ratio < 0.8 else 0.0),
+            "nanites": 13.0 + (1.0 if hp_ratio < 0.8 else 0.0),
             "servos": 9.0,
             "jets": 8.5,
             "reactor": 8.0,
@@ -293,8 +304,11 @@ class Bot:
                 away[0] = 0.8 * away[0] + 0.2 * goal[0]
                 away[1] = 0.8 * away[1] + 0.2 * goal[1]
             goal = away
-        elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
-            goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
+        if t - self.last_hit_time < 1.5 and self.last_threat_bearing is not None:
+            bearing = self.last_threat_bearing
+            if target is not None and nearest < 40.0:
+                bearing = math.atan2(target["pos"][1] - y, target["pos"][0] - x)
+            goal = self._evasion_goal([x, y], bearing, center, radius, goal)
 
         if self.navigator and goal is None and nearest > 60.0:
             if self.navigator.cover_score(x, y) < 2:
@@ -309,23 +323,6 @@ class Bot:
             else:
                 self.cover_goal = None
                 self.cover_recheck = t
-
-        quiet = nearest > 80.0 and t - self.last_hit_time > 3.0 and t - self.last_threat_time > 2.0
-        if self.navigator and goal is None and quiet:
-            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
-            if self.patrol_goal and math.hypot(self.patrol_goal[0] - center[0], self.patrol_goal[1] - center[1]) > safe_radius:
-                self.patrol_goal = None
-            if self.patrol_goal and _dist([x, y], self.patrol_goal) <= 10.0:
-                self.patrol_goal = None
-                self.patrol_recheck = t + 4.0
-            if self.patrol_goal is None and t >= self.patrol_recheck:
-                self.patrol_goal = self.navigator.nearby_cover_goal(me["pos"], center, radius, max_distance=72.0, min_distance=32.0)
-                self.patrol_recheck = t + (14.0 if self.patrol_goal else 8.0)
-            if self.patrol_goal:
-                goal = self.patrol_goal
-        elif not quiet:
-            self.patrol_goal = None
-            self.patrol_recheck = t + 6.0
 
         # Opportunistic pickups only when no visible mech is close enough to punish the stop.
         weapons = me.get("weapons", [])
@@ -430,12 +427,9 @@ class Bot:
                 waypoint = goal
             if goal:
                 move = _normalize(waypoint[0] - x, waypoint[1] - y)
-        stealth_patrol = self.patrol_goal is not None and goal == self.patrol_goal and quiet
-        if stealth_patrol:
-            move = [move[0] * 0.32, move[1] * 0.32]
         if roof_override:
             move = roof_override[0]
-        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6
+        urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 1.5
         action["move"] = move
         action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
         if roof_override and roof_override[2]:
@@ -470,7 +464,11 @@ class Bot:
             mech_config = self.config.get("mech", {})
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
+            fire = self._weapon_fire(obs, target, aim, action, selected)
+            # Long-range shots advertise your position and delay health regeneration.
+            if nearest > 70.0:
+                fire = [False, False]
+            action["fire"] = fire
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:
