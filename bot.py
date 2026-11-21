@@ -88,6 +88,7 @@ class Bot:
         self.last_threat_time = -100.0
         self.last_hit_time = -100.0
         self.last_attacker: int | None = None
+        self.current_target_id: int | None = None
         mech_config = self.config.get("mech", {})
         self.navigator: MapNavigator | None = load_navigator(
             hello.get("map", {}).get("dir", ""),
@@ -178,10 +179,6 @@ class Bot:
         npcs = [m for m in actors if m.get("kind") == "npc" and (distance(m) <= npc_range or int(m["id"]) == recent)]
         mech = min(candidates, key=distance) if candidates else None
         npc = min(npcs, key=distance) if npcs else None
-        if npc and (mech is None or distance(mech) >= 40.0):
-            return npc
-        if mech is None:
-            return None
 
         def key(target: dict[str, Any]) -> float:
             target_distance = distance(target)
@@ -191,7 +188,19 @@ class Bot:
             # Prefer a damaged mech enough to convert a good shot into a kill and cubes.
             return target_distance + 0.05 * hp - threat_bonus - charge_bonus
 
-        return min(candidates, key=key)
+        if npc and (mech is None or distance(mech) >= 40.0):
+            selected = npc
+        elif mech:
+            selected = min(candidates, key=key)
+        else:
+            self.current_target_id = None
+            return None
+
+        current = next((m for m in actors if int(m["id"]) == self.current_target_id and m.get("kind") == selected.get("kind")), None)
+        if current and key(current) <= key(selected) + 20.0:
+            selected = current
+        self.current_target_id = int(selected["id"])
+        return selected
 
     def _select_weapon(self, obs: mf.Observation, target: dict[str, Any]) -> tuple[int, dict[str, Any]] | None:
         me = obs["self"]

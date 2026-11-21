@@ -110,6 +110,15 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["id"], 3)
 
+    def test_target_selection_keeps_an_equally_good_target_to_steady_aim(self):
+        bot = self.make_bot()
+        first = {"id": 2, "kind": "mech", "pos": [31.0, 0.0, 0.0], "hp": 1400.0}
+        second = {"id": 3, "kind": "mech", "pos": [30.0, 0.0, 0.0], "hp": 1400.0}
+        obs = {"t": 1.0, "self": {"pos": [0.0, 0.0, 0.0]}, "mechs": [first, second]}
+        bot.current_target_id = 2
+
+        self.assertEqual(bot._target(obs)["id"], 2)
+
     def test_routes_to_an_uncontested_safe_drop_before_it_lands(self):
         bot = self.make_bot()
         me = {
