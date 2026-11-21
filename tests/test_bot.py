@@ -308,19 +308,6 @@ class PolicyTests(unittest.TestCase):
         self.assertGreater(abs(direction[0]), 0.6)
         self.assertGreater(abs(direction[1]), 0.6)
 
-    def test_escape_goal_opens_space_from_multiple_closing_mechs(self):
-        bot = self.make_bot()
-        me = {"pos": [0.0, 0.0, 0.0]}
-        threats = [
-            {"kind": "mech", "pos": [30.0, 0.0, 0.0], "vel": [-2.0, 0.0, 0.0]},
-            {"kind": "mech", "pos": [0.0, 30.0, 0.0], "vel": [0.0, -2.0, 0.0]},
-        ]
-
-        goal = bot._escape_goal(me, threats)
-
-        self.assertLess(goal[0], 0.0)
-        self.assertLess(goal[1], 0.0)
-
     def test_dodges_a_projectile_on_an_imminent_collision_course(self):
         bot = self.make_bot()
         me = {

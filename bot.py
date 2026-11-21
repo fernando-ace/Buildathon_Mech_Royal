@@ -163,41 +163,6 @@ class Bot:
                 best_score, best_direction = score, direction
         return best_direction
 
-    def _escape_goal(self, me: dict[str, Any], threats: list[dict[str, Any]]) -> list[float]:
-        """Move toward the safest direction when several mechs close in."""
-        x, y = float(me["pos"][0]), float(me["pos"][1])
-        nearby = []
-        for threat in threats:
-            dx = x - float(threat["pos"][0])
-            dy = y - float(threat["pos"][1])
-            distance = math.hypot(dx, dy)
-            if distance <= 135.0:
-                vel = threat.get("vel", [0.0, 0.0])
-                nearby.append((threat, distance, dx, dy, vel))
-        if not nearby:
-            return [x, y]
-
-        # Project briefly ahead to avoid choosing a route the opponents' current
-        # motion will immediately close. Favor opening space from the nearest mechs.
-        best_score = -math.inf
-        best_goal = [x, y]
-        for index in range(24):
-            angle = 2.0 * math.pi * index / 24.0
-            dx, dy = math.cos(angle), math.sin(angle)
-            goal_x, goal_y = x + 52.0 * dx, y + 52.0 * dy
-            score = 0.002 * sum(dx * threat_dx + dy * threat_dy for _, _, threat_dx, threat_dy, _ in nearby)
-            for threat, current, _, _, velocity in nearby:
-                vx = max(-20.0, min(20.0, float(velocity[0])))
-                vy = max(-20.0, min(20.0, float(velocity[1])))
-                future_x = float(threat["pos"][0]) + 1.2 * vx
-                future_y = float(threat["pos"][1]) + 1.2 * vy
-                future = math.hypot(goal_x - future_x, goal_y - future_y)
-                weight = 1.0 + max(0.0, 135.0 - current) / 45.0
-                score += weight * (min(160.0, future) - min(160.0, current))
-            if score > best_score:
-                best_score, best_goal = score, [goal_x, goal_y]
-        return best_goal
-
     def _zone_goal(self, obs: mf.Observation) -> list[float] | None:
         me = obs["self"]
         center, radius = self._future_zone(obs)
@@ -522,14 +487,6 @@ class Bot:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
                 evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
             goal = self._clamp_evasion_to_zone(evade, center, radius)
-        elif any(actor.get("kind") == "mech" and _dist(me["pos"], actor["pos"]) < 110.0 for actor in obs.get("mechs", [])):
-            # Don't wait for the nearest opponent to finish aiming before leaving.
-            nearby_mechs = [actor for actor in obs.get("mechs", []) if actor.get("kind") == "mech"]
-            escape = self._escape_goal(me, nearby_mechs)
-            if goal:
-                escape[0] = 0.8 * escape[0] + 0.2 * goal[0]
-                escape[1] = 0.8 * escape[1] + 0.2 * goal[1]
-            goal = self._clamp_evasion_to_zone(escape, center, radius)
         elif warning_sound:
             # An audible charge or mortar launch can reveal an attacker outside
             # vision. Cross that firing line briefly while preserving zone travel.
