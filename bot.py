@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 import mechfight as mf
-from nav import MapNavigator, load_navigator
+from nav import MapNavigator, load_navigator, point_in_ring
 
 
 def _dist(a: list[float], b: list[float]) -> float:
@@ -97,6 +97,8 @@ class Bot:
         )
         self.cover_goal: list[float] | None = None
         self.cover_recheck = 0.0
+        self.roof_state: dict[str, Any] | None = None
+        self.roof_recheck = 0.0
 
     def _future_zone(self, obs: mf.Observation) -> tuple[list[float], float]:
         zone = obs["zone"]
@@ -338,15 +340,84 @@ class Bot:
                 if _dist(me["pos"], drop["pos"]) > float(drop.get("radius", 8.0)) - 2.0:
                     goal = drop["pos"][:2]
 
+        roof_override: tuple[list[float], bool, bool] | None = None
+        if self.roof_state is None and self.navigator and goal is None and nearest > 120.0 and float(obs.get("alive", 16.0)) > 4.0 and self.navigator.cover_score(x, y) < 2 and t >= self.roof_recheck:
+            self.roof_recheck = t + 8.0
+            nearby_activity = any(float(s.get("age", 99.0)) < 1.0 and s.get("dist") == "near" for s in obs.get("sounds", []))
+            if not nearby_activity:
+                site = self.navigator.nearby_roof(me["pos"], center, radius, float(me.get("energy", 0.0)))
+                if site:
+                    self.roof_state = {"site": site, "phase": "approach", "started": t}
+
+        if self.roof_state:
+            state = self.roof_state
+            site = state["site"]
+            phase = state["phase"]
+            safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+            site_safe = math.hypot(site["x"] - center[0], site["y"] - center[1]) <= safe_radius
+            active_threat = (target is not None and nearest < 80.0) or self.last_hit_time >= t - 0.8 or any(float(s.get("age", 99.0)) < 0.6 and s.get("dist") == "near" for s in obs.get("sounds", []))
+            if phase != "landed" and (goal is not None or not site_safe or active_threat):
+                self.roof_state = None
+                self.roof_recheck = t + 30.0
+            elif (phase == "landed" and (goal is not None or (target and nearest < 60.0) or self.last_hit_time >= t - 0.8)):
+                self.roof_state = None
+                self.roof_recheck = t + 25.0
+            elif phase == "approach":
+                goal = site["takeoff"]
+                if t - state["started"] > 15.0:
+                    self.roof_state = None
+                    self.roof_recheck = t + 30.0
+                    goal = None
+                elif math.hypot(x - site["takeoff"][0], y - site["takeoff"][1]) <= 4.5 and me.get("grounded", False):
+                    state["phase"] = "ascend"
+                    state["started"] = t
+                    roof_override = ([0.0, 0.0], True, True)
+            elif phase == "ascend":
+                if z >= site["top"] + 1.5:
+                    state["phase"] = "cross"
+                elif t - state["started"] > 8.0 or float(me.get("energy", 0.0)) < 20.0:
+                    self.roof_state = None
+                    self.roof_recheck = t + 30.0
+                else:
+                    roof_override = ([0.0, 0.0], True, bool(me.get("grounded", False)))
+            if self.roof_state and state["phase"] == "cross":
+                inside = point_in_ring(x, y, site["ring"]) and not any(point_in_ring(x, y, hole) for hole in site["holes"])
+                if inside and z >= site["top"] + 1.2:
+                    state["phase"] = "land"
+                    state["started"] = t
+                else:
+                    goal = [site["x"], site["y"]]
+                    roof_override = (_normalize(site["x"] - x, site["y"] - y), True, False)
+            if self.roof_state and state["phase"] == "land":
+                if me.get("grounded", False) and abs(z - site["top"]) <= 3.0:
+                    state["phase"] = "landed"
+                elif t - state["started"] > 6.0 or z < site["top"] - 2.0:
+                    self.roof_state = None
+                    self.roof_recheck = t + 30.0
+                else:
+                    roof_override = ([0.0, 0.0], False, False)
+            if self.roof_state and state["phase"] == "landed":
+                goal = None
+                roof_override = ([0.0, 0.0], False, False)
+
         move = [0.0, 0.0]
         if goal:
             waypoint = self.navigator.next_waypoint(me["pos"], goal) if self.navigator else None
+            if self.roof_state and self.roof_state["phase"] == "approach" and waypoint is None:
+                self.roof_state = None
+                self.roof_recheck = t + 30.0
+                goal = None
             if waypoint is None:
                 waypoint = goal
-            move = _normalize(waypoint[0] - x, waypoint[1] - y)
+            if goal:
+                move = _normalize(waypoint[0] - x, waypoint[1] - y)
+        if roof_override:
+            move = roof_override[0]
         urgent = not bool(me.get("in_zone", True)) or (target is not None and nearest < 40.0) or self.last_hit_time >= t - 0.6
         action["move"] = move
-        action["boost"] = bool(urgent and float(me.get("energy", 0.0)) > 15.0)
+        action["boost"] = roof_override[1] if roof_override else bool(urgent and float(me.get("energy", 0.0)) > 15.0)
+        if roof_override and roof_override[2]:
+            action["jump"] = True
 
         if target is None and t - self.last_hit_time > 0.5:
             gun = next((w for w in weapons if w and w.get("kind") == "gun"), None)

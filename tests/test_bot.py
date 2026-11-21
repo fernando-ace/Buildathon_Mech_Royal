@@ -110,6 +110,39 @@ class NavigationTests(unittest.TestCase):
         self.assertIsNotNone(waypoint)
         self.assertNotEqual(waypoint, [20.0, 15.0])
 
+    def test_roof_candidates_respect_energy_reserve(self):
+        nx = ny = 40
+        world = {
+            "bounds": {"minX": 0.0, "maxX": 39.0, "minY": 0.0, "maxY": 39.0},
+            "terrain": {"minX": 0.0, "minY": 0.0, "step": 1.0, "nx": nx, "ny": ny, "scale": 0.01},
+            "prisms": [{
+                "base": 0.0,
+                "top": 15.0,
+                "ring": [10.0, 10.0, 30.0, 10.0, 30.0, 30.0, 10.0, 30.0],
+                "holes": [],
+            }],
+        }
+        heights = array("h", [0] * (nx * ny)).tobytes()
+        nav = MapNavigator(world, heights, grid_step=4.0, radius=1.0, height=3.0)
+        site = nav.nearby_roof([5.0, 20.0], [20.0, 20.0], 40.0, 100.0)
+        self.assertIsNotNone(site)
+        self.assertEqual(site["gain"], 15.0)
+        self.assertIsNone(nav.nearby_roof([5.0, 20.0], [20.0, 20.0], 40.0, 40.0))
+
+    def test_roof_candidate_under_an_overhang_is_rejected(self):
+        nx = ny = 40
+        world = {
+            "bounds": {"minX": 0.0, "maxX": 39.0, "minY": 0.0, "maxY": 39.0},
+            "terrain": {"minX": 0.0, "minY": 0.0, "step": 1.0, "nx": nx, "ny": ny, "scale": 0.01},
+            "prisms": [
+                {"base": 0.0, "top": 15.0, "ring": [10.0, 10.0, 30.0, 10.0, 30.0, 30.0, 10.0, 30.0], "holes": []},
+                {"base": 15.0, "top": 25.0, "ring": [16.0, 16.0, 24.0, 16.0, 24.0, 24.0, 16.0, 24.0], "holes": []},
+            ],
+        }
+        heights = array("h", [0] * (nx * ny)).tobytes()
+        nav = MapNavigator(world, heights, grid_step=4.0, radius=1.0, height=3.0)
+        self.assertIsNone(nav.nearby_roof([5.0, 20.0], [20.0, 20.0], 40.0, 100.0))
+
 
 if __name__ == "__main__":
     unittest.main()

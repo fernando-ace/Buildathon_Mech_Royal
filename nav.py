@@ -86,6 +86,7 @@ class MapNavigator:
                 float(prism["base"]), float(prism["top"]), ring, holes,
             ))
         self._build_grid()
+        self.roofs = self._build_roofs()
         self._path: list[int] = []
         self._planned_goal: tuple[float, float] | None = None
 
@@ -165,6 +166,87 @@ class MapNavigator:
                     if 0 <= nx < self.width and 0 <= ny < self.height_count and self._blocked[self._id(nx, ny)]:
                         adjacent += 1
                 self._cover[node] = adjacent
+
+    def _build_roofs(self) -> list[dict[str, Any]]:
+        sites: list[dict[str, Any]] = []
+        for min_x, max_x, min_y, max_y, _base, top, ring, holes in self._prisms:
+            if max_x - min_x < 12.0 or max_y - min_y < 12.0 or top < 5.0:
+                continue
+            cx = sum(ring[::2]) / (len(ring) // 2)
+            cy = sum(ring[1::2]) / (len(ring) // 2)
+            candidates = [(cx, cy)]
+            if not point_in_ring(cx, cy, ring) or any(point_in_ring(cx, cy, hole) for hole in holes):
+                candidates = []
+            # Vertex means can fall outside concave footprints. Sample a compact lattice
+            # and keep the interior point farthest from every edge.
+            for row in range(5):
+                for col in range(5):
+                    x = min_x + (max_x - min_x) * (col + 0.5) / 5.0
+                    y = min_y + (max_y - min_y) * (row + 0.5) / 5.0
+                    if point_in_ring(x, y, ring) and not any(point_in_ring(x, y, hole) for hole in holes):
+                        candidates.append((x, y))
+            if not candidates:
+                continue
+            def clearance(point: tuple[float, float]) -> float:
+                x, y = point
+                return min([_ring_distance(x, y, ring)] + [_ring_distance(x, y, hole) for hole in holes])
+            center_x, center_y = max(candidates, key=clearance)
+            clear = clearance((center_x, center_y))
+            ground = self._height_at(center_x, center_y)
+            if ground is None:
+                continue
+            gain = top - ground
+            if not 8.0 <= gain <= 35.0 or clear < 5.0:
+                continue
+            overhead = any(
+                other_ring is not ring and other_top > top + 1.0 and other_base < top + self.height
+                and point_in_ring(center_x, center_y, other_ring)
+                and not any(point_in_ring(center_x, center_y, hole) for hole in other_holes)
+                for _, _, _, _, other_base, other_top, other_ring, other_holes in self._prisms
+            )
+            if overhead:
+                continue
+            # Merge near-identical roof prisms so only one climb target is considered.
+            if any(math.hypot(center_x - r["x"], center_y - r["y"]) < 8.0 and abs(top - r["top"]) < 3.0 for r in sites):
+                continue
+            sites.append({"x": center_x, "y": center_y, "top": top, "gain": gain, "clearance": clear, "ring": ring, "holes": holes})
+        return sites
+
+    def nearby_roof(self, position: list[float], center: list[float], radius: float, energy: float, max_distance: float = 65.0) -> dict[str, Any] | None:
+        safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
+        best: tuple[float, dict[str, Any]] | None = None
+        for site in self.roofs:
+            if site["gain"] * 1.5 + 25.0 > energy:
+                continue
+            if math.hypot(site["x"] - center[0], site["y"] - center[1]) > safe_radius:
+                continue
+            boundary: tuple[float, float] | None = None
+            boundary_distance = math.inf
+            ring = site["ring"]
+            count = len(ring) // 2
+            for i in range(count):
+                j = (i + 1) % count
+                ax, ay, bx, by = ring[2 * i], ring[2 * i + 1], ring[2 * j], ring[2 * j + 1]
+                distance = _segment_distance(position[0], position[1], ax, ay, bx, by)
+                if distance < boundary_distance:
+                    boundary_distance = distance
+                    dx, dy = bx - ax, by - ay
+                    length2 = dx * dx + dy * dy
+                    t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((position[0] - ax) * dx + (position[1] - ay) * dy) / length2))
+                    boundary = (ax + t * dx, ay + t * dy)
+            if boundary is None:
+                continue
+            ox, oy = boundary[0] - site["x"], boundary[1] - site["y"]
+            length = max(1.0, math.hypot(ox, oy))
+            takeoff = [boundary[0] + ox / length * (self.radius + 4.0), boundary[1] + oy / length * (self.radius + 4.0)]
+            distance = math.hypot(takeoff[0] - position[0], takeoff[1] - position[1])
+            if distance > max_distance:
+                continue
+            score = distance + site["gain"] * 0.6 - min(8.0, site["clearance"] * 0.5)
+            candidate = {**site, "takeoff": takeoff}
+            if best is None or score < best[0]:
+                best = (score, candidate)
+        return best[1] if best else None
 
     def _nearest_open(self, x: float, y: float) -> int | None:
         ix = round((x - self.origin_x) / self.grid_step)
