@@ -418,6 +418,26 @@ class Bot:
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
+        # When an attacker is nearby but outside vision, use its weapon sound to
+        # break contact. Avoid reacting to movement sounds, which can cause aimless
+        # oscillation while crossing the map.
+        elif target is None:
+            hostile_sounds = [
+                sound for sound in recent_sounds
+                if sound.get("kind") in {"explosion", "mortar", "laser", "lightning", "gun", "npc_gun"}
+                and sound.get("dist") == "near"
+                and float(sound.get("age", 99.0)) <= 0.45
+            ]
+            if hostile_sounds:
+                sound = min(hostile_sounds, key=lambda s: float(s.get("age", 99.0)))
+                bearing = float(sound["bearing"])
+                evade = [x - 48.0 * math.cos(bearing), y - 48.0 * math.sin(bearing)]
+                if goal:
+                    evade[0] = 0.7 * evade[0] + 0.3 * goal[0]
+                    evade[1] = 0.7 * evade[1] + 0.3 * goal[1]
+                goal = evade
+                incoming_attack = True
+
         if self.navigator and goal is None and nearest > 60.0:
             if self.navigator.cover_score(x, y) < 2:
                 if t >= self.cover_recheck:

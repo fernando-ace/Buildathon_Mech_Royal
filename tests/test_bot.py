@@ -132,6 +132,28 @@ class PolicyTests(unittest.TestCase):
         self.assertLess(abs(action["move"][0]), 0.1)
         self.assertGreater(abs(action["move"][1]), 0.9)
 
+    def test_moves_away_from_a_recent_nearby_weapon_sound(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        obs = {
+            "tick": 1, "t": 1.0, "alive": 12.0, "self": me, "mechs": [],
+            "events": [], "sounds": [{"kind": "gun", "bearing": 0.0, "dist": "near", "age": 0.1}],
+            "beams": [], "projectiles": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertLess(action["move"][0], -0.9)
+        self.assertAlmostEqual(action["move"][1], 0.0, delta=0.1)
+        self.assertTrue(action["boost"])
+
     def test_close_mech_keeps_priority_over_a_drone(self):
         bot = self.make_bot()
         mech = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0]}
