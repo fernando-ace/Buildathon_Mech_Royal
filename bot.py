@@ -167,17 +167,28 @@ class Bot:
 
     def _target(self, obs: mf.Observation) -> dict[str, Any] | None:
         me = obs["self"]
-        candidates = [m for m in obs.get("mechs", []) if m.get("kind") == "mech"]
-        if not candidates:
-            return None
+        actors = obs.get("mechs", [])
+        candidates = [m for m in actors if m.get("kind") == "mech"]
         recent = self.last_attacker if obs["t"] - self.last_threat_time < 3.0 else None
 
+        def distance(target: dict[str, Any]) -> float:
+            return _dist(me["pos"], target["pos"])
+
+        npc_range = float(self.config.get("npc", {}).get("aggro_range", 45.0))
+        npcs = [m for m in actors if m.get("kind") == "npc" and (distance(m) <= npc_range or int(m["id"]) == recent)]
+        mech = min(candidates, key=distance) if candidates else None
+        npc = min(npcs, key=distance) if npcs else None
+        if npc and (mech is None or distance(mech) >= 40.0):
+            return npc
+        if mech is None:
+            return None
+
         def key(target: dict[str, Any]) -> float:
-            distance = _dist(me["pos"], target["pos"])
+            target_distance = distance(target)
             hp = float(target.get("hp", target.get("max_hp", 1400)))
             threat_bonus = 45.0 if int(target["id"]) == recent else 0.0
             charge_bonus = 25.0 if target.get("charging") else 0.0
-            return distance + 0.025 * hp - threat_bonus - charge_bonus
+            return target_distance + 0.025 * hp - threat_bonus - charge_bonus
 
         return min(candidates, key=key)
 
@@ -283,7 +294,7 @@ class Bot:
         nearest = _dist(me["pos"], target["pos"]) if target else math.inf
 
         # A nearby mech is a threat first. Retreat while keeping a path toward safety.
-        if target and nearest < 40.0:
+        if target and target.get("kind") == "mech" and nearest < 40.0:
             dx, dy = x - target["pos"][0], y - target["pos"][1]
             length = max(1.0, math.hypot(dx, dy))
             away = [x + 48.0 * dx / length, y + 48.0 * dy / length]
@@ -428,7 +439,10 @@ class Bot:
         if target:
             selected = self._select_weapon(obs, target)
             selected_kind = selected[1].get("kind") if selected else "gun"
-            target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
+            if target.get("kind") == "npc":
+                target_height = float(self.config.get("npc", {}).get("height", 3.5)) * 0.5
+            else:
+                target_height = float(self.config["mech"].get("height", 9.0)) * (1.0 + 0.05 * float(target.get("cubes", 0))) * 0.5
             if selected_kind == "mortar" and selected:
                 solution = _mortar_aim(me, target, float(selected[1].get("stats", {}).get("speed", 72.0)), float(self.config["weapons"]["mortar"].get("gravity", 22.0)), target_height)
                 if solution:
@@ -448,10 +462,7 @@ class Bot:
             mech_config = self.config.get("mech", {})
             pitch = max(float(mech_config.get("min_pitch", -0.7)), min(float(mech_config.get("max_pitch", 1.3)), pitch))
             aim = [yaw, pitch]
-            fire = self._weapon_fire(obs, target, aim, action, selected)
-            # Long-range misses can reveal our position without meaningfully reducing
-            # the time to kill. Keep shots for closer engagements.
-            action["fire"] = fire if nearest <= 70.0 else [False, False]
+            action["fire"] = self._weapon_fire(obs, target, aim, action, selected)
         elif self.last_threat_bearing is not None and t - self.last_threat_time <= 2.0:
             aim = [self.last_threat_bearing, 0.0]
         elif goal:

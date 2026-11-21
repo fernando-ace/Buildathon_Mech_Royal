@@ -40,6 +40,7 @@ class PolicyTests(unittest.TestCase):
             "config": {
                 "mech": {},
                 "weapons": {"gun": {}, "mortar": {"gravity": 22.0}},
+                "npc": {"aggro_range": 45.0, "height": 3.5},
                 "loot": {"pickup_radius": 4.0},
                 "upgrades": [],
             },
@@ -71,7 +72,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(fire, [False, False])
         self.assertTrue(action["reload"])
 
-    def test_fire_is_limited_to_close_engagements(self):
+    def test_engages_a_close_drone_without_retreating_from_it(self):
         bot = self.make_bot()
         gun = {"kind": "gun", "ammo": 12.0, "reload": 0.0, "stats": {"range": 230.0, "speed": 252.0}}
         me = {
@@ -80,18 +81,26 @@ class PolicyTests(unittest.TestCase):
             "hp": 1400.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
             "in_zone": True, "weapons": [gun, None], "cubes": 0,
         }
-        target = {"id": 1, "kind": "mech", "pos": [100.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 1400.0}
+        drone = {"id": 1001, "kind": "npc", "pos": [30.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "hp": 350.0}
         obs = {
-            "tick": 1, "t": 0.1, "alive": 16.0, "self": me, "mechs": [target],
+            "tick": 1, "t": 0.1, "alive": 16.0, "self": me, "mechs": [drone],
             "events": [], "sounds": [], "beams": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
             "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
                      "shrink_start": 20.0, "shrink_end": 30.0},
         }
 
-        self.assertEqual(bot.act(obs)["fire"], [False, False])
+        action = bot.act(obs)
 
-        target["pos"][0] = 30.0
-        self.assertEqual(bot.act(obs)["fire"], [True, False])
+        self.assertEqual(action["move"], [0.0, 0.0])
+        self.assertTrue(action["fire"][0])
+
+    def test_close_mech_keeps_priority_over_a_drone(self):
+        bot = self.make_bot()
+        mech = {"id": 2, "kind": "mech", "pos": [30.0, 0.0, 0.0]}
+        drone = {"id": 1001, "kind": "npc", "pos": [20.0, 0.0, 0.0]}
+        obs = {"t": 1.0, "self": {"pos": [0.0, 0.0, 0.0]}, "mechs": [mech, drone]}
+
+        self.assertEqual(bot._target(obs)["kind"], "mech")
 
 
 class NavigationTests(unittest.TestCase):
