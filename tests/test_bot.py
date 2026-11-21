@@ -110,6 +110,24 @@ class PolicyTests(unittest.TestCase):
 
         self.assertEqual(bot._target(obs)["id"], 3)
 
+    def test_routes_to_an_uncontested_safe_drop_before_it_lands(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "aim": [0.0, 0.0], "stats": {"walk_speed": 11.7},
+            "hp": 500.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        obs = {
+            "tick": 300, "t": 30.0, "alive": 16.0, "self": me, "mechs": [],
+            "events": [], "sounds": [], "beams": [], "pickups": [], "cubes": [],
+            "drops": [{"pos": [80.0, 0.0, 0.0], "lands_in": 10.0, "holder": None, "radius": 8.0}],
+            "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 200.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 40.0, "shrink_end": 50.0},
+        }
+
+        self.assertGreater(bot.act(obs)["move"][0], 0.0)
+
 
 class NavigationTests(unittest.TestCase):
     def make_navigator(self):
