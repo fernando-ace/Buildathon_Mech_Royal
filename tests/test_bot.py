@@ -328,6 +328,27 @@ class PolicyTests(unittest.TestCase):
         obs["tick"] = 2
         action = bot.act(obs)
         self.assertTrue(action["boost"])
+
+    def test_dodges_an_unseen_recent_laser_charge_sound(self):
+        bot = self.make_bot()
+        me = {
+            "pos": [0.0, 0.0, 0.0], "vel": [0.0, 0.0, 0.0], "aim": [0.0, 0.0],
+            "stats": {"turn_rate": 4.0, "pitch_rate": 3.0, "muzzle_height": 7.0},
+            "hp": 1000.0, "max_hp": 1400.0, "energy": 100.0, "grounded": False,
+            "in_zone": True, "weapons": [None, None], "cubes": 0,
+        }
+        obs = {
+            "tick": 1, "t": 1.0, "alive": 12.0, "self": me, "mechs": [],
+            "events": [], "sounds": [{"kind": "laser_charge", "bearing": 0.0, "dist": "mid", "age": 0.1}],
+            "beams": [], "projectiles": [], "pickups": [], "cubes": [], "drops": [], "offer": None,
+            "zone": {"center": [0.0, 0.0], "radius": 100.0, "next_center": [0.0, 0.0], "next_radius": 100.0,
+                     "shrink_start": 20.0, "shrink_end": 30.0},
+        }
+
+        action = bot.act(obs)
+
+        self.assertGreater(abs(action["move"][1]), 0.9)
+        self.assertTrue(action["boost"])
     def test_does_not_leave_the_zone_for_an_early_supply_drop(self):
         bot = self.make_bot()
         me = {

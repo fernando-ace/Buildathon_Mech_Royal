@@ -391,6 +391,11 @@ class Bot:
                 if attacker is not None:
                     self.last_attacker = int(attacker)
         recent_sounds = [s for s in obs.get("sounds", []) if float(s.get("age", 99.0)) <= 0.8 and s.get("bearing") is not None]
+        warning_sounds = [
+            s for s in recent_sounds
+            if s.get("kind") in ("laser_charge", "mortar") and float(s.get("age", 99.0)) <= 0.45
+        ]
+        warning_sound = min(warning_sounds, key=lambda s: float(s.get("age", 99.0))) if warning_sounds else None
         if recent_sounds:
             sound_priority = {"explosion": 0, "mortar": 1, "laser": 2, "lightning": 3, "gun": 4, "npc_gun": 5, "boost": 6, "jet": 7, "step": 8}
             sound = min(recent_sounds, key=lambda s: (float(s.get("age", 99.0)), sound_priority.get(s.get("kind"), 9)))
@@ -470,6 +475,17 @@ class Bot:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
                 evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
             goal = evade
+        elif warning_sound:
+            # An audible charge or mortar launch can reveal an attacker outside
+            # vision. Cross that firing line briefly while preserving zone travel.
+            bearing = float(warning_sound["bearing"])
+            side = self._evasion_side(t)
+            evade = [x - side * 36.0 * math.sin(bearing), y + side * 36.0 * math.cos(bearing)]
+            if goal:
+                evade[0] = 0.65 * evade[0] + 0.35 * goal[0]
+                evade[1] = 0.65 * evade[1] + 0.35 * goal[1]
+            goal = evade
+            incoming_attack = float(warning_sound.get("age", 99.0)) < 0.35
         elif target is None and self.last_hit_time >= t - 0.6 and self.last_threat_bearing is not None and goal is None:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
