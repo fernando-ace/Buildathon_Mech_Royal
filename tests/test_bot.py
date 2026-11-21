@@ -263,6 +263,19 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(first, first_bot._evasion_side(1.1))
         self.assertEqual(-first, first_bot._evasion_side(first_bot.evasion_until + 0.01))
 
+    def test_multi_threat_evasion_uses_a_diagonal_between_crossing_attack_lines(self):
+        bot = self.make_bot()
+        me = {"pos": [0.0, 0.0, 0.0], "energy": 100.0, "stats": {"boost_speed": 19.5}}
+        threats = [
+            {"pos": [60.0, 0.0, 0.0], "aim": [math.pi, 0.0], "charging": True},
+            {"pos": [0.0, 60.0, 0.0], "aim": [-math.pi / 2.0, 0.0], "charging": True},
+        ]
+
+        direction = bot._multi_threat_evasion(me, threats, 1.0)
+
+        self.assertGreater(abs(direction[0]), 0.6)
+        self.assertGreater(abs(direction[1]), 0.6)
+
     def test_dodges_a_projectile_on_an_imminent_collision_course(self):
         bot = self.make_bot()
         me = {

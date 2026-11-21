@@ -125,6 +125,44 @@ class Bot:
             self.evasion_until = t + self.rng.uniform(0.3, 0.55)
         return self.evasion_side
 
+    def _multi_threat_evasion(self, me: dict[str, Any], threats: list[dict[str, Any]], t: float) -> list[float]:
+        """Choose a lateral direction that opens distance from every aimed attack line."""
+        if not threats:
+            return [0.0, 0.0]
+        pos = me["pos"]
+        stats = me.get("stats", {})
+        speed = float(stats.get("boost_speed", 19.5) if float(me.get("energy", 0.0)) > 15.0 else stats.get("walk_speed", 11.7))
+        preferred_side = self._evasion_side(t)
+        primary = threats[0]
+        pdx = float(pos[0]) - float(primary["pos"][0])
+        pdy = float(pos[1]) - float(primary["pos"][1])
+        plen = max(1.0, math.hypot(pdx, pdy))
+        preferred = [-preferred_side * pdy / plen, preferred_side * pdx / plen]
+        best_direction = preferred
+        best_score = -math.inf
+        for index in range(16):
+            angle = 2.0 * math.pi * index / 16.0
+            direction = [math.cos(angle), math.sin(angle)]
+            score = 0.001 * (direction[0] * preferred[0] + direction[1] * preferred[1])
+            for threat in threats:
+                source = threat["pos"]
+                yaw = float(threat.get("aim", [0.0, 0.0])[0])
+                line = [math.cos(yaw), math.sin(yaw)]
+                rx, ry = float(pos[0]) - float(source[0]), float(pos[1]) - float(source[1])
+                along = rx * line[0] + ry * line[1]
+                if along < 0.0:
+                    continue
+                offset = rx * line[1] - ry * line[0]
+                distance = math.hypot(rx, ry)
+                horizon = 0.45 if threat.get("charging") else min(0.65, max(0.15, distance / 252.0))
+                cross = direction[0] * line[1] - direction[1] * line[0]
+                miss_distance = abs(offset + speed * horizon * cross)
+                weight = 1.4 if threat.get("charging") else 1.0
+                score += weight * min(60.0, miss_distance)
+            if score > best_score:
+                best_score, best_direction = score, direction
+        return best_direction
+
     def _zone_goal(self, obs: mf.Observation) -> list[float] | None:
         me = obs["self"]
         center, radius = self._future_zone(obs)
@@ -378,6 +416,7 @@ class Bot:
         projectile_threat = self._projectile_threat(obs)
         incoming_attack = False
         incoming_threat: dict[str, Any] | None = None
+        incoming_threats: list[dict[str, Any]] = []
         incoming_aim_error = math.inf
         incoming_charging = False
         threat_score = math.inf
@@ -394,6 +433,7 @@ class Bot:
                 aim_error = abs(_angle_delta(toward_us, float(actor_aim[0])))
             charging = bool(actor.get("charging"))
             if aim_error < 0.35:
+                incoming_threats.append(actor)
                 score = (0.0 if charging else 1.0) + aim_error + threat_distance * 0.001
                 if score < threat_score:
                     incoming_threat = actor
@@ -422,11 +462,8 @@ class Bot:
             incoming_attack = incoming_aim_error < 0.16 or incoming_charging
             # Move across a visible attack line before the shot lands. Keep half of
             # any existing zone or cover objective so evasion does not undo routing.
-            target_pos = incoming_threat["pos"]
-            dx, dy = target_pos[0] - x, target_pos[1] - y
-            length = max(1.0, math.hypot(dx, dy))
-            side = self._evasion_side(t)
-            evade = [x - side * 36.0 * dy / length, y + side * 36.0 * dx / length]
+            direction = self._multi_threat_evasion(me, incoming_threats, t)
+            evade = [x + 36.0 * direction[0], y + 36.0 * direction[1]]
             if goal:
                 evade[0] = 0.5 * evade[0] + 0.5 * goal[0]
                 evade[1] = 0.5 * evade[1] + 0.5 * goal[1]
