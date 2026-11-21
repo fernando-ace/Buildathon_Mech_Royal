@@ -348,11 +348,18 @@ class MapNavigator:
         node = self._nearest_open(x, y)
         return int(self._cover[node]) if node is not None else 0
 
-    def nearby_cover_goal(self, position: list[float], center: list[float], radius: float, max_distance: float = 72.0) -> list[float] | None:
+    def nearby_cover_goal(
+        self,
+        position: list[float],
+        center: list[float],
+        radius: float,
+        max_distance: float = 72.0,
+        min_cover_score: int = 2,
+    ) -> list[float] | None:
         safe_radius = max(0.0, radius - min(22.0, max(8.0, radius * 0.08)))
         best: tuple[float, int] | None = None
         for node, cover in enumerate(self._cover):
-            if cover < 2 or self._blocked[node]:
+            if cover < min_cover_score or self._blocked[node]:
                 continue
             x, y = self._xy(node)
             travel = math.hypot(x - position[0], y - position[1])

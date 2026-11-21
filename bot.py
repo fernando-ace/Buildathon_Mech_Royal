@@ -505,18 +505,19 @@ class Bot:
             goal = [x - 42.0 * math.cos(self.last_threat_bearing), y - 42.0 * math.sin(self.last_threat_bearing)]
 
         if self.navigator and goal is None and nearest > 60.0:
-            if self.navigator.cover_score(x, y) < 2:
-                if t >= self.cover_recheck:
-                    self.cover_goal = self.navigator.nearby_cover_goal(me["pos"], center, radius)
-                    self.cover_recheck = t + 8.0
-                if self.cover_goal and _dist([x, y], self.cover_goal) > 15.0:
-                    goal = self.cover_goal
-                elif self.cover_goal:
-                    self.cover_goal = None
-                    self.cover_recheck = t + 12.0
-            else:
+            cover = self.navigator.cover_score(x, y)
+            if t >= self.cover_recheck:
+                min_cover = 2 if cover < 2 else cover + 1
+                max_distance = 72.0 if cover < 2 else 48.0
+                self.cover_goal = self.navigator.nearby_cover_goal(
+                    me["pos"], center, radius, max_distance=max_distance, min_cover_score=min_cover,
+                )
+                self.cover_recheck = t + (8.0 if cover < 2 else 18.0)
+            if self.cover_goal and _dist([x, y], self.cover_goal) > 15.0:
+                goal = self.cover_goal
+            elif self.cover_goal:
                 self.cover_goal = None
-                self.cover_recheck = t
+                self.cover_recheck = t + (12.0 if cover < 2 else 24.0)
 
         # Opportunistic pickups only when no visible mech is close enough to punish the stop.
         weapons = me.get("weapons", [])

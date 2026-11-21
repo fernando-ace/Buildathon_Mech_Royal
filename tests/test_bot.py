@@ -444,6 +444,20 @@ class NavigationTests(unittest.TestCase):
         self.assertIsNotNone(waypoint)
         self.assertNotEqual(waypoint, [20.0, 15.0])
 
+    def test_cover_goal_respects_requested_minimum_cover_score(self):
+        nav = self.make_navigator()
+        lower_cover = nav._id(2, 2)
+        higher_cover = nav._id(3, 2)
+        nav._cover[lower_cover] = 2
+        nav._cover[higher_cover] = 3
+
+        goal = nav.nearby_cover_goal(
+            list(nav._xy(lower_cover)), [20.0, 20.0], 40.0,
+            max_distance=20.0, min_cover_score=3,
+        )
+
+        self.assertEqual(goal, list(nav._xy(higher_cover)))
+
     def test_roof_candidates_respect_energy_reserve(self):
         nx = ny = 40
         world = {
